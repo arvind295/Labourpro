@@ -27,10 +27,14 @@ def save_data(df, worksheet_name):
         # 1. Update the Google Sheet
         conn.update(worksheet=worksheet_name, data=df)
         
-        # 2. Clear the memory immediately
+        # 2. Clear the memory
         st.cache_data.clear()
         
-        # 3. Restart the app so it can't overwrite old data
+        # 3. PAUSE FOR 2 SECONDS (To fix the API Error)
+        import time
+        time.sleep(2)
+        
+        # 4. Restart the app
         st.rerun()
         
     except Exception as e:
