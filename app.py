@@ -28,6 +28,42 @@ def get_billing_start_date(entry_date):
     days_since_saturday = (entry_date.weekday() + 2) % 7
     return entry_date - timedelta(days=days_since_saturday)
 
+def calculate_split_costs(df_e, df_c):
+    """
+    Goes through every entry and calculates exact cost for Mason/Helper/Ladies
+    based on the rate effective at that specific date.
+    """
+    if df_e.empty or df_c.empty:
+        return df_e
+    
+    # Ensure dates are comparable
+    df_c["effective_date"] = pd.to_datetime(df_c["effective_date"]).dt.date
+    # df_e["date"] is already converted in the main loop usually
+    
+    m_costs, h_costs, l_costs = [], [], []
+    
+    for index, row in df_e.iterrows():
+        # Find the rate for this contractor that was active on the entry date
+        rates = df_c[
+            (df_c["name"] == row["contractor"]) & 
+            (df_c["effective_date"] <= row["date"])
+        ].sort_values("effective_date", ascending=False)
+        
+        if not rates.empty:
+            rate = rates.iloc[0]
+            m_costs.append(row["count_mason"] * rate["rate_mason"])
+            h_costs.append(row["count_helper"] * rate["rate_helper"])
+            l_costs.append(row["count_ladies"] * rate["rate_ladies"])
+        else:
+            m_costs.append(0)
+            h_costs.append(0)
+            l_costs.append(0)
+            
+    df_e["amt_mason"] = m_costs
+    df_e["amt_helper"] = h_costs
+    df_e["amt_ladies"] = l_costs
+    return df_e
+
 # --- 4. LOGIN LOGIC ---
 if "logged_in" not in st.session_state:
     st.session_state.update({"logged_in": False, "phone": None, "role": None})
@@ -81,67 +117,51 @@ st.title("🏗️ Labour Management Pro")
 # --- NAVIGATION ---
 tabs = ["📝 Daily Entry"]
 if my_role == "admin":
-    tabs += ["📊 Weekly Bill (Details)", "💰 Payment Summary", "📍 Sites", "👷 Contractors", "👥 Users"]
+    tabs += ["🔍 Site Logs (Day-to-Day)", "📊 Weekly Bill (Details)", "💰 Payment Summary", "📍 Sites", "👷 Contractors", "👥 Users"]
 
 current_tab = st.radio("Navigate", tabs, horizontal=True, label_visibility="collapsed")
 st.divider()
 
 # ==========================
-# 1. DAILY ENTRY (SITE RESTRICTED)
+# 1. DAILY ENTRY 
 # ==========================
 if current_tab == "📝 Daily Entry":
     st.subheader("📝 Daily Work Entry")
     
-    # Fetch Master Data
     df_sites = fetch_data("sites")
     df_con = fetch_data("contractors")
 
     if df_sites.empty or df_con.empty:
         st.warning("⚠️ Admin must add Sites and Contractors first.")
     else:
-        # --- SITE ACCESS LOGIC ---
-        # 1. Get all sites initially
+        # Site Access Logic
         available_sites = df_sites["name"].unique().tolist()
-        
-        # 2. If user is NOT admin, restrict them
         if my_role != "admin":
             try:
-                # Fetch fresh user profile to get assigned_site
                 user_profile = supabase.table("users").select("assigned_site").eq("phone", my_phone).single().execute()
                 assigned_site = user_profile.data.get("assigned_site")
-                
                 if assigned_site and assigned_site in available_sites:
-                    available_sites = [assigned_site] # Restrict to ONLY this site
+                    available_sites = [assigned_site] 
                     st.success(f"📍 You are logged in to: **{assigned_site}**")
                 else:
                     st.error("⛔ You have not been assigned a site yet. Please contact Admin.")
                     st.stop()
-            except Exception as e:
-                st.error(f"Error checking site access: {e}")
+            except:
                 st.stop()
 
-        # Input Columns
         c1, c2, c3 = st.columns(3)
         entry_date = c1.date_input("Date of Work", date.today())
-        site = c2.selectbox("Site", available_sites) # Filtered list
+        site = c2.selectbox("Site", available_sites) 
         contractor = c3.selectbox("Contractor", df_con["name"].unique())
         
         st.write("---")
 
-        # Check existing
         existing_entry = None
         try:
-            resp = supabase.table("entries").select("*") \
-                .eq("date", str(entry_date)) \
-                .eq("site", site) \
-                .eq("contractor", contractor) \
-                .execute()
-            if resp.data:
-                existing_entry = resp.data[0]
-        except:
-            pass
+            resp = supabase.table("entries").select("*").eq("date", str(entry_date)).eq("site", site).eq("contractor", contractor).execute()
+            if resp.data: existing_entry = resp.data[0]
+        except: pass
 
-        # Mode setup
         mode = "new"
         current_edits = 0
         val_m, val_h, val_l = 0.0, 0.0, 0.0
@@ -154,19 +174,16 @@ if current_tab == "📝 Daily Entry":
             val_l = float(existing_entry["count_ladies"])
             
             if current_edits >= 2:
-                st.error(f"⛔ Locked: This entry has been edited 2 times already.")
-                st.warning(f"Existing Data: Masons: {val_m} | Helpers: {val_h} | Ladies: {val_l}")
+                st.error(f"⛔ Locked: Edited 2 times already.")
                 st.stop()
             else:
                 st.warning(f"✏️ Editing existing entry. (Edits used: {current_edits}/2)")
 
-        # Inputs
         k1, k2, k3 = st.columns(3)
         n_mason = k1.number_input("🧱 Masons", min_value=0.0, step=0.5, value=val_m, format="%.1f")
         n_helper = k2.number_input("👷 Helpers", min_value=0.0, step=0.5, value=val_h, format="%.1f")
         n_ladies = k3.number_input("👩 Ladies", min_value=0.0, step=0.5, value=val_l, format="%.1f")
 
-        # Rate Calculation
         rate_row = None
         try:
             resp = supabase.table("contractors").select("*").eq("name", contractor).lte("effective_date", str(entry_date)).order("effective_date", desc=True).limit(1).execute()
@@ -181,125 +198,168 @@ if current_tab == "📝 Daily Entry":
             if my_role == "admin":
                 st.info(f"💰 **Total: ₹{total_est:,.2f}**")
 
-            btn_text = "✅ Save Entry" if mode == "new" else f"🔄 Update Entry (Attempt {current_edits + 1}/2)"
+            btn_text = "✅ Save Entry" if mode == "new" else f"🔄 Update"
             
             if st.button(btn_text, type="primary"):
                 if total_est > 0:
                     data_payload = {
-                        "date": str(entry_date),
-                        "site": site,
-                        "contractor": contractor,
-                        "count_mason": n_mason,
-                        "count_helper": n_helper,
-                        "count_ladies": n_ladies,
+                        "date": str(entry_date), "site": site, "contractor": contractor,
+                        "count_mason": n_mason, "count_helper": n_helper, "count_ladies": n_ladies,
                         "total_cost": total_est
                     }
 
                     if mode == "new":
                         data_payload["edit_count"] = 0
                         supabase.table("entries").insert(data_payload).execute()
-                        st.success("Saved Successfully!")
+                        st.success("Saved!")
                     else:
                         if not existing_entry.get("original_values"):
                             snapshot_str = f"M:{existing_entry['count_mason']} H:{existing_entry['count_helper']} L:{existing_entry['count_ladies']} (₹{existing_entry['total_cost']})"
                             data_payload["original_values"] = snapshot_str
-                        
                         data_payload["edit_count"] = current_edits + 1
                         supabase.table("entries").update(data_payload).eq("id", existing_entry["id"]).execute()
-                        st.success(f"Updated! ({data_payload['edit_count']}/2 edits used)")
-                    
+                        st.success("Updated!")
                     st.rerun()
                 else:
-                    st.error("Please enter at least one labor count.")
+                    st.error("Enter at least one count.")
         else:
             st.error("⚠️ No active rates found.")
 
 # ==========================
-# 2. WEEKLY BILL
+# 2. SITE LOGS
+# ==========================
+elif current_tab == "🔍 Site Logs (Day-to-Day)":
+    st.subheader("🔍 Day-to-Day Site Inspection")
+    df_sites = fetch_data("sites")
+    if not df_sites.empty:
+        selected_site = st.selectbox("Select Site", df_sites["name"].unique())
+        if selected_site:
+            raw_data = supabase.table("entries").select("*").eq("site", selected_site).order("date", desc=True).execute().data
+            df_log = pd.DataFrame(raw_data)
+            if not df_log.empty:
+                df_log["date"] = pd.to_datetime(df_log["date"])
+                df_log["Month"] = df_log["date"].dt.strftime('%B %Y')
+                
+                c1, c2 = st.columns([1, 3])
+                selected_month = c1.selectbox("Filter Month", ["All Months"] + df_log["Month"].unique().tolist())
+                display_df = df_log if selected_month == "All Months" else df_log[df_log["Month"] == selected_month]
+                
+                st.markdown(f"### 💰 Total: **₹{display_df['total_cost'].sum():,.2f}**")
+                st.dataframe(display_df, use_container_width=True, hide_index=True)
+            else:
+                st.info("No entries.")
+
+# ==========================
+# 3. WEEKLY BILL (UPDATED WITH BREAKDOWN)
 # ==========================
 elif current_tab == "📊 Weekly Bill (Details)":
-    st.subheader("📊 Detailed Site Log")
+    st.subheader("📊 Detailed Site Log (With Breakdown)")
+    
     df_e = fetch_data("entries")
+    df_c = fetch_data("contractors")
     
     if not df_e.empty:
         df_e["date"] = pd.to_datetime(df_e["date"]).dt.date
+        
+        # 1. CALCULATE SPLIT COSTS (New Step)
+        if not df_c.empty:
+            df_e = calculate_split_costs(df_e, df_c)
+        else:
+            df_e["amt_mason"] = 0
+            df_e["amt_helper"] = 0
+            df_e["amt_ladies"] = 0
+
+        # 2. Billing periods
         df_e["start_date"] = df_e["date"].apply(get_billing_start_date)
         df_e["end_date"] = df_e["start_date"] + timedelta(days=6)
-        df_e["Billing Period"] = df_e.apply(
-            lambda x: f"{x['start_date'].strftime('%d %b')} - {x['end_date'].strftime('%d %b')}", 
-            axis=1
-        )
+        df_e["Billing Period"] = df_e.apply(lambda x: f"{x['start_date'].strftime('%d %b')} - {x['end_date'].strftime('%d %b')}", axis=1)
         
-        # --- SECTION A: Normal Bill ---
+        # 3. Aggregate
         report = df_e.groupby(["Billing Period", "start_date", "contractor", "site"])[
-            ["total_cost", "count_mason", "count_helper", "count_ladies"]
+            ["total_cost", "count_mason", "count_helper", "count_ladies", "amt_mason", "amt_helper", "amt_ladies"]
         ].sum().reset_index()
         
+        # 4. Display
         st.dataframe(
-            report[["Billing Period", "contractor", "site", "total_cost", "count_mason", "count_helper", "count_ladies"]],
+            report,
             column_config={
-                "total_cost": st.column_config.NumberColumn("Site Bill (₹)", format="₹%d"),
-                "count_mason": st.column_config.NumberColumn("Masons", format="%.1f"),
+                "total_cost": st.column_config.NumberColumn("Total Bill (₹)", format="₹%d"),
+                "amt_mason": st.column_config.NumberColumn("Mason Amt (₹)", format="₹%d"),
+                "amt_helper": st.column_config.NumberColumn("Helper Amt (₹)", format="₹%d"),
+                "amt_ladies": st.column_config.NumberColumn("Ladies Amt (₹)", format="₹%d"),
+                "count_mason": "Masons",
+                "count_helper": "Helpers",
+                "count_ladies": "Ladies"
             },
             use_container_width=True,
             hide_index=True
         )
 
-        # --- SECTION B: AUDIT LOG ---
+        # Audit Log Section
         st.write("---")
-        st.subheader("⚠️ Edit History (Audit Log)")
+        st.subheader("⚠️ Edit History")
         if "edit_count" in df_e.columns:
-            edited_df = df_e[df_e["edit_count"] > 0].copy()
+            edited_df = df_e[df_e["edit_count"] > 0]
             if not edited_df.empty:
-                edited_df["Changes Made"] = edited_df["edit_count"].apply(lambda x: f"{x} time(s)")
-                st.dataframe(
-                    edited_df[["date", "site", "contractor", "total_cost", "original_values", "Changes Made"]],
-                    column_config={
-                        "date": "Date of Work",
-                        "total_cost": st.column_config.NumberColumn("Current Amount (₹)", format="₹%d"),
-                        "original_values": st.column_config.TextColumn("Original Entry (Before Edit)", width="medium"),
-                    },
-                    use_container_width=True,
-                    hide_index=True
-                )
-            else:
-                st.success("✅ No edits detected.")
-    else:
-        st.info("No data available.")
+                st.dataframe(edited_df[["date", "site", "contractor", "total_cost", "original_values", "edit_count"]], hide_index=True)
 
 # ==========================
-# 3. PAYMENT SUMMARY
+# 4. PAYMENT SUMMARY (UPDATED WITH BREAKDOWN)
 # ==========================
 elif current_tab == "💰 Payment Summary":
     st.subheader("💰 Weekly Payment Dashboard")
+    
     df_e = fetch_data("entries")
+    df_c = fetch_data("contractors")
+
     if not df_e.empty:
         df_e["date"] = pd.to_datetime(df_e["date"]).dt.date
+        
+        # Calculate Splits
+        if not df_c.empty:
+            df_e = calculate_split_costs(df_e, df_c)
+            
         df_e["start_date"] = df_e["date"].apply(get_billing_start_date)
         df_e["end_date"] = df_e["start_date"] + timedelta(days=6)
-        df_e["Billing Period"] = df_e.apply(
-            lambda x: f"{x['start_date'].strftime('%d %b')} - {x['end_date'].strftime('%d %b')}", 
-            axis=1
-        )
+        df_e["Billing Period"] = df_e.apply(lambda x: f"{x['start_date'].strftime('%d %b')} - {x['end_date'].strftime('%d %b')}", axis=1)
         
         weeks_df = df_e[["Billing Period", "start_date"]].drop_duplicates().sort_values("start_date", ascending=False)
         
         for _, week_row in weeks_df.iterrows():
             current_period = week_row["Billing Period"]
             st.markdown(f"### 🗓️ Week: {current_period}")
+            
             week_data = df_e[df_e["Billing Period"] == current_period]
             contractors_in_week = week_data.groupby("contractor")
+            
             for contractor_name, contractor_df in contractors_in_week:
                 grand_total = contractor_df["total_cost"].sum()
+                
                 with st.expander(f"👷 **{contractor_name}** —  Total: **₹{grand_total:,.2f}**"):
-                    breakdown = contractor_df.groupby("site")[["total_cost", "count_mason", "count_helper", "count_ladies"]].sum().reset_index()
-                    st.dataframe(breakdown, hide_index=True)
+                    
+                    # Detailed Breakdown table
+                    breakdown = contractor_df.groupby("site")[
+                        ["total_cost", "amt_mason", "amt_helper", "amt_ladies"]
+                    ].sum().reset_index()
+                    
+                    st.dataframe(
+                        breakdown,
+                        column_config={
+                            "site": "Site Name",
+                            "total_cost": st.column_config.NumberColumn("Site Total (₹)", format="₹%d"),
+                            "amt_mason": st.column_config.NumberColumn("Mason (₹)", format="₹%d"),
+                            "amt_helper": st.column_config.NumberColumn("Helper (₹)", format="₹%d"),
+                            "amt_ladies": st.column_config.NumberColumn("Ladies (₹)", format="₹%d"),
+                        },
+                        use_container_width=True,
+                        hide_index=True
+                    )
             st.divider()
     else:
         st.info("No data available.")
 
 # ==========================
-# 4. SITES 
+# 5. SITES 
 # ==========================
 elif current_tab == "📍 Sites":
     st.subheader("📍 Manage Sites")
@@ -308,72 +368,61 @@ elif current_tab == "📍 Sites":
     
     new_s = st.text_input("New Site Name")
     if st.button("Add Site"):
-        existing_sites = df_s["name"].tolist() if not df_s.empty else []
-        if new_s in existing_sites:
-            st.error(f"❌ Site '{new_s}' already exists!")
-        elif new_s:
+        existing = df_s["name"].tolist() if not df_s.empty else []
+        if new_s not in existing and new_s:
             supabase.table("sites").insert({"name": new_s}).execute()
-            st.success("Site Added!")
+            st.success("Added!")
             st.rerun()
 
 # ==========================
-# 5. CONTRACTORS
+# 6. CONTRACTORS
 # ==========================
 elif current_tab == "👷 Contractors":
     st.subheader("👷 Manage Contractors")
     df_c = fetch_data("contractors")
     if not df_c.empty:
         st.dataframe(df_c)
-        all_contractor_names = df_c["name"].unique().tolist()
+        all_cons = df_c["name"].unique().tolist()
     else:
-        all_contractor_names = []
+        all_cons = []
 
     st.write("---")
-    st.write("#### ✏️ Add or Edit Contractor")
-    c_name_input = st.selectbox("Select or Type Contractor Name", options=all_contractor_names + ["Create New..."], index=None, placeholder="Type to search...")
-    final_name = ""
-    is_edit_mode = False
+    st.write("#### ✏️ Add/Edit Contractor")
+    c_input = st.selectbox("Name", all_cons + ["Create New..."], index=None)
     
-    if c_name_input == "Create New...":
-        final_name = st.text_input("Enter New Contractor Name").strip()
-    elif c_name_input:
-        final_name = c_name_input
-        is_edit_mode = True
+    fname = st.text_input("New Name") if c_input == "Create New..." else c_input
+    is_edit = c_input != "Create New..." and c_input is not None
 
-    def_m, def_h, def_l = 800, 500, 400
-    if is_edit_mode and final_name:
+    dm, dh, dl = 800, 500, 400
+    if is_edit and fname:
         try:
-            current_row = df_c[df_c["name"] == final_name].sort_values("effective_date", ascending=False).iloc[0]
-            def_m, def_h, def_l = int(current_row["rate_mason"]), int(current_row["rate_helper"]), int(current_row["rate_ladies"])
-            st.info(f"🔄 **Editing Mode:** {final_name}")
-        except: pass 
+            row = df_c[df_c["name"] == fname].sort_values("effective_date", ascending=False).iloc[0]
+            dm, dh, dl = int(row["rate_mason"]), int(row["rate_helper"]), int(row["rate_ladies"])
+        except: pass
 
-    if final_name:
+    if fname:
         c1, c2, c3 = st.columns(3)
-        rm = c1.number_input("Mason Rate", value=def_m)
-        rh = c2.number_input("Helper Rate", value=def_h)
-        rl = c3.number_input("Ladies Rate", value=def_l)
-        eff_date = st.date_input("Effective From Date", date.today())
+        rm = c1.number_input("Mason Rate", value=dm)
+        rh = c2.number_input("Helper Rate", value=dh)
+        rl = c3.number_input("Ladies Rate", value=dl)
+        ed = st.date_input("Effective From", date.today())
         
-        btn_label = "Update Rates" if is_edit_mode else "Add Contractor"
-        if st.button(btn_label):
+        if st.button("Save Contractor"):
             supabase.table("contractors").insert({
-                "name": final_name, "rate_mason": rm, "rate_helper": rh, "rate_ladies": rl, "effective_date": str(eff_date)
+                "name": fname, "rate_mason": rm, "rate_helper": rh, "rate_ladies": rl, "effective_date": str(ed)
             }).execute()
-            st.success(f"{final_name} saved successfully!")
+            st.success("Saved!")
             st.rerun()
 
-    st.write("---")
-    with st.expander("🗑️ Delete Contractor (Danger Zone)"):
-        del_name = st.selectbox("Select Contractor to Delete", options=all_contractor_names, index=None)
-        if st.button("❌ Delete Permanently", type="primary"):
-            if del_name:
-                supabase.table("contractors").delete().eq("name", del_name).execute()
-                st.success(f"Contractor '{del_name}' deleted.")
-                st.rerun()
+    with st.expander("🗑️ Delete Contractor"):
+        dname = st.selectbox("Select to Delete", all_cons, index=None)
+        if st.button("Delete Permanently"):
+            supabase.table("contractors").delete().eq("name", dname).execute()
+            st.success("Deleted.")
+            st.rerun()
 
 # ==========================
-# 6. USERS (UPDATED: SITE ASSIGNMENT)
+# 7. USERS
 # ==========================
 elif current_tab == "👥 Users":
     st.subheader("👥 User Access")
@@ -381,42 +430,20 @@ elif current_tab == "👥 Users":
     st.dataframe(df_u)
     
     st.write("---")
-    st.write("#### ➕ Add New User")
-    
-    u_ph = st.text_input("Phone Number")
-    u_nm = st.text_input("User Name")
-    
+    u_ph = st.text_input("Phone")
+    u_nm = st.text_input("Name")
     c1, c2 = st.columns(2)
     u_role = c1.selectbox("Role", ["user", "admin"])
     
-    # FETCH SITES FOR ASSIGNMENT
-    site_opts = []
-    df_s = fetch_data("sites")
-    if not df_s.empty:
-        site_opts = df_s["name"].unique().tolist()
-    
-    # If role is Admin, usually they don't need assignment, but we can leave it optional
-    u_site = c2.selectbox("Assign Site (Optional for Admin)", options=["None/All"] + site_opts)
+    site_opts = fetch_data("sites")["name"].unique().tolist() if not fetch_data("sites").empty else []
+    u_site = c2.selectbox("Assign Site", ["None/All"] + site_opts)
 
-    if st.button("Add / Update User"):
-        try:
-            site_val = None if u_site == "None/All" else u_site
-            
-            # Upsert logic (checking if phone exists first is better, but simple insert for now)
-            # We first check if user exists to Update instead of Insert (to fix site assignment)
-            exists = supabase.table("users").select("*").eq("phone", u_ph).execute().data
-            
-            if exists:
-                supabase.table("users").update({
-                    "name": u_nm, "role": u_role, "assigned_site": site_val
-                }).eq("phone", u_ph).execute()
-                st.success("User Updated!")
-            else:
-                supabase.table("users").insert({
-                    "phone": u_ph, "name": u_nm, "role": u_role, "assigned_site": site_val
-                }).execute()
-                st.success("User Added!")
-            
-            st.rerun()
-        except Exception as e:
-            st.error(f"Error: {e}")
+    if st.button("Save User"):
+        s_val = None if u_site == "None/All" else u_site
+        exists = supabase.table("users").select("*").eq("phone", u_ph).execute().data
+        if exists:
+            supabase.table("users").update({"name": u_nm, "role": u_role, "assigned_site": s_val}).eq("phone", u_ph).execute()
+        else:
+            supabase.table("users").insert({"phone": u_ph, "name": u_nm, "role": u_role, "assigned_site": s_val}).execute()
+        st.success("User Saved!")
+        st.rerun()
