@@ -90,9 +90,16 @@ st.title("🏗️ Labour Management Pro")
 
 # Sidebar
 with st.sidebar:
-    st.write(f"👤 **{st.session_state['role'].upper()}**")
+    # --- SAFE ROLE CHECK ---
+    # This prevents the "NoneType" error if role is missing
+    my_role = st.session_state.get("role")
+    if my_role is None:
+        my_role = "User"  # Default fallback
+    
+    st.write(f"👤 **{my_role.upper()}**")
+    
     if st.button("Logout"):
-        st.session_state.update({"logged_in": False, "role": None})
+        st.session_state.clear() # Wipes memory completely
         st.rerun()
 
 # Tabs
