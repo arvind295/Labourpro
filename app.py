@@ -21,9 +21,20 @@ def fetch_data(worksheet_name):
         return pd.DataFrame()
 
 
+# --- PASTE THIS NEW CODE INSTEAD ---
 def save_data(df, worksheet_name):
-    """Writes the updated DataFrame back to Google Sheets"""
-    conn.update(worksheet=worksheet_name, data=df)
+    try:
+        # 1. Update the Google Sheet
+        conn.update(worksheet=worksheet_name, data=df)
+        
+        # 2. Clear the memory immediately
+        st.cache_data.clear()
+        
+        # 3. Restart the app so it can't overwrite old data
+        st.rerun()
+        
+    except Exception as e:
+        st.error(f"Error saving data: {e}")
 
 
 def get_sites():
