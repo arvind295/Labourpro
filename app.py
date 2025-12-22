@@ -182,20 +182,20 @@ if user_type == "Admin Dashboard":
                             new_row = pd.DataFrame([{"Name": new_site}])
                         
                         # 2. SAFE DOWNLOAD (Retry if Google is busy)
-                        try:
-                            fresh_sites = conn.read(worksheet="Sites", ttl=0)
-                        except Exception:
-                            st.warning("Google is busy. Retrying in 3 seconds...")
+                            try:
+                                fresh_sites = conn.read(worksheet="Sites", ttl=0)
+                            except Exception:
+                                st.warning("Google is busy. Retrying in 3 seconds...")
                             import time
                             time.sleep(3)
                             # Try one last time
                             fresh_sites = conn.read(worksheet="Sites", ttl=0)
                         
                         # 3. Add to the FRESH list
-                        final_sites = pd.concat([fresh_sites, new_row], ignore_index=True)
+                            final_sites = pd.concat([fresh_sites, new_row], ignore_index=True)
                         
                         # 4. Save
-                        save_data(final_sites, "Sites")
+                            save_data(final_sites, "Sites")
             with c2:
                 if not df_sites.empty:
                     del_site = st.selectbox("Remove Site", df_sites["Name"].unique())
