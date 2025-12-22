@@ -174,14 +174,14 @@ if user_type == "Admin Dashboard":
                         if not df_sites.empty and new_site in df_sites["Name"].values:
                             st.error("Site exists.")
                         else:
-                        # 1. Create the new row for the site
-                        new_row = pd.DataFrame([{"Name": new_site}])
+                            # 1. Create the new row for the site
+                            new_row = pd.DataFrame([{"Name": new_site}])
                         
-                        # 2. DOWNLOAD FRESH DATA (This fixes the deletion bug!)
-                        fresh_sites = conn.read(worksheet="Sites", ttl=0)
+                            # 2. DOWNLOAD FRESH DATA (This fixes the deletion bug!)
+                             fresh_sites = conn.read(worksheet="Sites", ttl=0)
                         
-                        # 3. Add to the FRESH list, not the old one
-                        final_sites = pd.concat([fresh_sites, new_row], ignore_index=True)
+                            # 3. Add to the FRESH list, not the old one
+                            final_sites = pd.concat([fresh_sites, new_row], ignore_index=True)
                         
                         # 4. Save (Auto-refresh happens inside save_data now)
                         save_data(final_sites, "Sites")
