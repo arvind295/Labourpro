@@ -466,11 +466,15 @@ else:
                                     "Submitted_Email": email, "Submitted_Name": final_name,
                                     "Edit_Count": 0
                                 }
-                                new_df = pd.DataFrame([new_entry])
-                                full_df = pd.concat([full_df, new_df], ignore_index=True)
-                                save_data(full_df, "Entries")
-                                st.success("Saved Successfully!")
-                                st.cache_data.clear()
-                            st.rerun()
-        else:
-            st.error("User not authorized. Contact Admin.")
+ # Create the small dataframe for the new entry
+            new_df = pd.DataFrame([new_entry])
+
+            # 1. Download the REAL latest data from Google right now
+            #    (This prevents the "deleting old sites" bug)
+            fresh_df = conn.read(worksheet="Entries", ttl=0)
+
+            # 2. Add your new row to the FRESH list
+            final_df = pd.concat([fresh_df, new_df], ignore_index=True)
+
+            # 3. Save (The app will automatically refresh after this line because we fixed save_data)
+            save_data(final_df, "Entries")
