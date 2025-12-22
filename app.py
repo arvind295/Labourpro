@@ -178,7 +178,7 @@ if user_type == "Admin Dashboard":
                             new_row = pd.DataFrame([{"Name": new_site}])
                         
                             # 2. DOWNLOAD FRESH DATA (This fixes the deletion bug!)
-                             fresh_sites = conn.read(worksheet="Sites", ttl=0)
+                            fresh_sites = conn.read(worksheet="Sites", ttl=0)
                         
                             # 3. Add to the FRESH list, not the old one
                             final_sites = pd.concat([fresh_sites, new_row], ignore_index=True)
