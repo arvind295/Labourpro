@@ -1,12 +1,12 @@
 import streamlit as st
 import pandas as pd
-from datetime import datetime
+from datetime import datetime, date
 from supabase import create_client, Client
 import time
 
-# --- 1. SETUP & CONFIG ---
-st.set_page_config(page_title="LabourPro", page_icon="🏗️")
-ADMIN_PASSWORD = "admin123"  # <--- CHANGE YOUR ADMIN PASSWORD HERE
+# --- 1. CONFIGURATION ---
+st.set_page_config(page_title="LabourPro", page_icon="🏗️", layout="wide")
+ADMIN_PASSWORD = "admin123"  # <--- Update if needed
 
 # --- 2. CONNECT TO SUPABASE ---
 try:
@@ -15,216 +15,243 @@ try:
         url = st.secrets["supabase"]["url"]
         key = st.secrets["supabase"]["key"]
         return create_client(url, key)
-
     supabase = init_connection()
 except Exception:
-    st.error("⚠️ Error connecting to Supabase.")
+    st.error("⚠️ Supabase connection failed. Check secrets.toml.")
     st.stop()
 
-# --- 3. SESSION STATE SETUP ---
+# --- 3. LOGIN LOGIC ---
 if "logged_in" not in st.session_state:
-    st.session_state["logged_in"] = False
-    st.session_state["phone"] = None
-    st.session_state["role"] = None
+    st.session_state.update({"logged_in": False, "phone": None, "role": None})
 
-# --- 4. AUTHENTICATION FUNCTIONS ---
 def login_process():
     st.title("🏗️ Login")
-    st.write("Enter your registered mobile number to continue.")
-    
-    phone_input = st.text_input("Mobile Number", max_chars=10).strip()
-    
+    phone = st.text_input("Mobile Number", max_chars=10).strip()
     if st.button("Login"):
-        if not phone_input:
-            st.warning("Please enter a number.")
-            return
-
-        # Check DB for this number
+        # Check user in DB
         try:
-            response = supabase.table("users").select("*").eq("phone", phone_input).execute()
-            data = response.data
-            
-            if len(data) > 0:
-                user = data[0]
-                role = user["role"]
-                
-                # IF ADMIN: Ask for password
-                if role == "admin":
+            user_data = supabase.table("users").select("*").eq("phone", phone).execute().data
+            if user_data:
+                user = user_data[0]
+                # Admin Flow
+                if user["role"] == "admin":
                     st.session_state["temp_user"] = user
-                    st.session_state["awaiting_password"] = True
+                    st.session_state["awaiting_pass"] = True
                     st.rerun()
-                
-                # IF USER: Direct Login
+                # User Flow
                 else:
-                    st.session_state["logged_in"] = True
-                    st.session_state["phone"] = user["phone"]
-                    st.session_state["role"] = "user"
-                    st.success(f"Welcome back, {user.get('name', 'User')}!")
+                    st.session_state.update({"logged_in": True, "phone": user["phone"], "role": "user"})
                     st.rerun()
             else:
-                st.error("❌ Access Denied. Your number is not authorized by Admin.")
+                st.error("❌ Number not found.")
         except Exception as e:
-            st.error(f"Login Error: {e}")
+            st.error(f"Error: {e}")
 
-    # Admin Password Check (Second Step)
-    if st.session_state.get("awaiting_password", False):
-        st.info(f"👤 Admin Detected: {st.session_state['temp_user']['phone']}")
-        admin_pass = st.text_input("Enter Admin Password", type="password")
-        if st.button("Verify Password"):
-            if admin_pass == ADMIN_PASSWORD:
-                st.session_state["logged_in"] = True
-                st.session_state["phone"] = st.session_state["temp_user"]["phone"]
-                st.session_state["role"] = "admin"
-                st.session_state["awaiting_password"] = False
-                st.rerun()
-            else:
-                st.error("Wrong password.")
+    # Admin Password Step
+    if st.session_state.get("awaiting_pass", False):
+        st.info(f"Admin: {st.session_state['temp_user']['phone']}")
+        if st.text_input("Password", type="password") == ADMIN_PASSWORD:
+            st.session_state.update({
+                "logged_in": True, 
+                "phone": st.session_state['temp_user']['phone'], 
+                "role": "admin", 
+                "awaiting_pass": False
+            })
+            st.rerun()
 
-def logout():
-    st.session_state["logged_in"] = False
-    st.session_state["phone"] = None
-    st.session_state["role"] = None
-    st.rerun()
-
-# --- 5. SHOW LOGIN OR APP ---
 if not st.session_state["logged_in"]:
     login_process()
     st.stop()
 
-# ==========================================
-# MAIN APP (LOGGED IN)
-# ==========================================
+# --- 4. DATA FUNCTIONS ---
+def fetch_data(table):
+    return pd.DataFrame(supabase.table(table).select("*").execute().data)
 
-# Sidebar Info
-with st.sidebar:
-    st.write(f"📱: **{st.session_state['phone']}**")
-    st.write(f"🔑: **{st.session_state['role'].upper()}**")
-    if st.button("Logout"):
-        logout()
+def get_active_rate(contractor_name, target_date):
+    """Finds the rate effective for the specific date selected."""
+    try:
+        # Get all rates for this contractor, order by newest effective date first
+        response = supabase.table("contractors")\
+            .select("*")\
+            .eq("name", contractor_name)\
+            .lte("effective_date", str(target_date))\
+            .order("effective_date", desc=True)\
+            .limit(1)\
+            .execute()
+        
+        if response.data:
+            return response.data[0] # Return the specific rate row
+        return None
+    except:
+        return None
 
+# --- 5. MAIN APP INTERFACE ---
 st.title("🏗️ Labour Management Pro")
 
-# --- DEFINE TABS ---
+# Sidebar
+with st.sidebar:
+    st.write(f"👤 **{st.session_state['role'].upper()}**")
+    if st.button("Logout"):
+        st.session_state.update({"logged_in": False, "role": None})
+        st.rerun()
+
+# Tabs
+tabs = ["📝 Daily Entry"]
 if st.session_state["role"] == "admin":
-    # Admin gets "Manage Users" tab
-    tabs = st.tabs(["📝 Daily Entry", "👥 Manage Users", "📍 Sites", "👷 Contractors", "📊 View Data"])
-    tab_entry, tab_users, tab_sites, tab_con, tab_view = tabs
-else:
-    # User gets ONLY Entry
-    st.info("👋 Welcome! Submit your daily report below.")
-    tab_entry = st.container()
-    tab_users, tab_sites, tab_con, tab_view = None, None, None, None
+    tabs += ["👥 Users", "📍 Sites", "👷 Contractors & Rates", "📊 Data"]
 
-# --- HELPER: FETCH DATA ---
-def fetch_data(table):
-    response = supabase.table(table).select("*").execute()
-    return pd.DataFrame(response.data)
+current_tab = st.radio("Navigate", tabs, horizontal=True, label_visibility="collapsed")
+st.divider()
 
-# ------------------------------------------
-# TAB: DAILY ENTRY (Everyone)
-# ------------------------------------------
-with tab_entry:
+# ==========================
+# 1. DAILY ENTRY TAB
+# ==========================
+if current_tab == "📝 Daily Entry":
     st.subheader("📝 New Daily Entry")
-    df_sites = fetch_data("sites")
-    df_con = fetch_data("contractors")
     
-    if df_sites.empty or df_con.empty:
-        st.warning("Admin must add Sites/Contractors first.")
+    df_sites = fetch_data("sites")
+    # Get unique contractor names only
+    df_con_raw = fetch_data("contractors")
+    
+    if df_sites.empty or df_con_raw.empty:
+        st.warning("⚠️ Admin must add Sites and Contractors first.")
     else:
+        # Inputs
         c1, c2, c3 = st.columns(3)
-        entry_date = c1.date_input("Date", datetime.today())
+        entry_date = c1.date_input("Date of Work", date.today())
         site = c2.selectbox("Site", df_sites["name"].unique())
-        contractor = c3.selectbox("Contractor", df_con["name"].unique())
+        contractor = c3.selectbox("Contractor", df_con_raw["name"].unique())
         
-        st.divider()
-        labor_count = st.number_input("Labor Count", min_value=1, value=1)
+        st.write("---")
+        st.write("Enter Labor Counts:")
         
-        if not df_con.empty:
-            rate = df_con[df_con["name"] == contractor]["rate"].iloc[0]
-            total = labor_count * float(rate)
-            st.info(f"💰 Cost: ₹{total}")
-
-        if st.button("✅ Save Entry", use_container_width=True):
-            supabase.table("entries").insert({
-                "date": str(entry_date),
-                "site": site,
-                "contractor": contractor,
-                "labor_count": labor_count,
-                "total_cost": total
-            }).execute()
-            st.success("Saved!")
-            time.sleep(1)
-            st.rerun()
-
-# ------------------------------------------
-# ADMIN TABS
-# ------------------------------------------
-if st.session_state["role"] == "admin":
-
-    # --- TAB: MANAGE USERS (Authorize Mobile Numbers) ---
-    with tab_users:
-        st.subheader("👥 Authorize Users")
+        # 3 Separate Inputs
+        k1, k2, k3 = st.columns(3)
+        n_mason = k1.number_input("🧱 Masons", min_value=0, value=0)
+        n_helper = k2.number_input("👷 Helpers", min_value=0, value=0)
+        n_ladies = k3.number_input("👩 Ladies", min_value=0, value=0)
         
-        # 1. Add New User
-        c1, c2 = st.columns([2, 1])
-        new_phone = c1.text_input("Enter Mobile Number to Authorize")
-        new_name = c2.text_input("User Name (Optional)")
+        # Dynamic Rate Calculation
+        rate_info = get_active_rate(contractor, entry_date)
         
-        if st.button("➕ Authorize Number"):
-            if new_phone:
-                try:
-                    supabase.table("users").insert({
-                        "phone": new_phone, 
-                        "role": "user",
-                        "name": new_name
+        if rate_info:
+            r_m = rate_info['rate_mason']
+            r_h = rate_info['rate_helper']
+            r_l = rate_info['rate_ladies']
+            
+            # Show live calculation
+            cost_m = n_mason * r_m
+            cost_h = n_helper * r_h
+            cost_l = n_ladies * r_l
+            total_est = cost_m + cost_h + cost_l
+            
+            st.info(f"""
+            **Active Rates for {entry_date}:** 🧱 Mason: ₹{r_m} | 👷 Helper: ₹{r_h} | 👩 Ladies: ₹{r_l}
+            
+            **Total Cost: ₹{total_est}**
+            """)
+            
+            if st.button("✅ Save Entry", type="primary"):
+                if total_est > 0:
+                    supabase.table("entries").insert({
+                        "date": str(entry_date),
+                        "site": site,
+                        "contractor": contractor,
+                        "count_mason": n_mason,
+                        "count_helper": n_helper,
+                        "count_ladies": n_ladies,
+                        "total_cost": total_est
                     }).execute()
-                    st.success(f"Authorized {new_phone}!")
+                    st.success("Entry Saved!")
+                    time.sleep(1)
+                    st.rerun()
+                else:
+                    st.error("Please enter at least one labor.")
+        else:
+            st.error(f"⚠️ No rates found for {contractor} on {entry_date}. Please update rates in Admin tab.")
+
+# ==========================
+# 2. CONTRACTORS & RATES (Admin)
+# ==========================
+elif current_tab == "👷 Contractors & Rates":
+    st.subheader("👷 Manage Contractors & Rates")
+    
+    df_c = fetch_data("contractors")
+    if not df_c.empty:
+        # Show cleaner table
+        st.caption("Rate History Log")
+        st.dataframe(df_c.sort_values("effective_date", ascending=False), hide_index=True)
+    
+    st.divider()
+    
+    col_add, col_update = st.columns(2)
+    
+    # ADD NEW or UPDATE EXISTING
+    with col_add:
+        st.write("### ➕ Add / Update Rates")
+        is_new = st.checkbox("New Contractor?", value=True)
+        
+        if is_new:
+            c_name = st.text_input("New Contractor Name")
+        else:
+            if not df_c.empty:
+                c_name = st.selectbox("Select Existing Contractor", df_c["name"].unique())
+            else:
+                c_name = None
+                st.warning("No contractors exist yet.")
+
+        # Rate Inputs
+        st.write("Set Rates:")
+        rm = st.number_input("Mason Rate (₹)", value=800)
+        rh = st.number_input("Helper Rate (₹)", value=500)
+        rl = st.number_input("Ladies Rate (₹)", value=400)
+        
+        # Effective Date
+        eff_date = st.date_input("🗓️ These rates apply from:", date.today())
+        
+        if st.button("💾 Save Rates"):
+            if c_name:
+                try:
+                    supabase.table("contractors").insert({
+                        "name": c_name,
+                        "rate_mason": rm,
+                        "rate_helper": rh,
+                        "rate_ladies": rl,
+                        "effective_date": str(eff_date)
+                    }).execute()
+                    st.success(f"Rates for {c_name} updated (Effective {eff_date})!")
                     st.rerun()
                 except Exception as e:
-                    st.error(f"Error (Maybe already exists?): {e}")
+                    st.error(f"Error: {e}")
+            else:
+                st.error("Enter a name.")
 
-        st.divider()
-        
-        # 2. List / Delete Users
-        users_df = fetch_data("users")
-        if not users_df.empty:
-            st.dataframe(users_df[["phone", "name", "role"]], hide_index=True)
-            
-            del_user = st.selectbox("Select Number to Remove", users_df["phone"].unique())
-            if st.button("❌ Remove User Access"):
-                if del_user == st.session_state["phone"]:
-                    st.error("You cannot delete yourself!")
-                else:
-                    supabase.table("users").delete().eq("phone", del_user).execute()
-                    st.warning(f"Removed access for {del_user}")
-                    st.rerun()
+# ==========================
+# 3. OTHER ADMIN TABS
+# ==========================
+elif current_tab == "📍 Sites":
+    st.subheader("📍 Manage Sites")
+    df_s = fetch_data("sites")
+    if not df_s.empty: st.dataframe(df_s, hide_index=True)
+    
+    new_s = st.text_input("New Site Name")
+    if st.button("Add Site"):
+        supabase.table("sites").insert({"name": new_s}).execute()
+        st.rerun()
 
-    # --- TAB: SITES ---
-    with tab_sites:
-        st.subheader("📍 Manage Sites")
-        df_sites = fetch_data("sites")
-        if not df_sites.empty: st.dataframe(df_sites, hide_index=True)
-        
-        new_site = st.text_input("New Site Name")
-        if st.button("Add Site"):
-            supabase.table("sites").insert({"name": new_site}).execute()
-            st.rerun()
-            
-    # --- TAB: CONTRACTORS ---
-    with tab_con:
-        st.subheader("👷 Manage Contractors")
-        df_c = fetch_data("contractors")
-        if not df_c.empty: st.dataframe(df_c, hide_index=True)
-        
-        n_name = st.text_input("Name")
-        n_rate = st.number_input("Rate", 500)
-        if st.button("Add Contractor"):
-            supabase.table("contractors").insert({"name": n_name, "rate": n_rate}).execute()
-            st.rerun()
+elif current_tab == "👥 Users":
+    st.subheader("👥 User Access")
+    df_u = fetch_data("users")
+    st.dataframe(df_u)
+    
+    u_ph = st.text_input("Phone Number")
+    u_nm = st.text_input("Name")
+    if st.button("Authorize User"):
+        supabase.table("users").insert({"phone": u_ph, "name": u_nm}).execute()
+        st.success("User Authorized")
 
-    # --- TAB: VIEW DATA ---
-    with tab_view:
-        st.subheader("📊 Data Log")
-        df_e = fetch_data("entries")
-        if not df_e.empty:
-            st.dataframe(df_e.sort_values("date", ascending=False), hide_index=True)
+elif current_tab == "📊 Data":
+    st.subheader("📊 Data Log")
+    df_e = fetch_data("entries")
+    if not df_e.empty:
+        st.dataframe(df_e.sort_values("date", ascending=False), use_container_width=True)
