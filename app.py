@@ -177,25 +177,32 @@ if user_type == "Admin Dashboard":
                     if new_site:
                         if not df_sites.empty and new_site in df_sites["Name"].values:
                             st.error("Site exists.")
+                        
                         else:
-                        # 1. Create the new row
                             new_row = pd.DataFrame([{"Name": new_site}])
                         
-                        # 2. SAFE DOWNLOAD (Retry if Google is busy)
+                        # --- DOUBLE SAFE DOWNLOAD BLOCK ---
+                        try:
+                            # Attempt 1: Try to get data normally
+                            fresh_sites = conn.read(worksheet="Sites", ttl=0)
+                        except Exception:
+                            # If Google blocks us, wait 5 seconds
+                            st.warning("Google is busy. Waiting 5 seconds...")
+                            import time
+                            time.sleep(5)
                             try:
+                                # Attempt 2: Try again
                                 fresh_sites = conn.read(worksheet="Sites", ttl=0)
                             except Exception:
-                                st.warning("Google is busy. Retrying in 3 seconds...")
-                            import time
-                            time.sleep(3)
-                            # Try one last time
-                            fresh_sites = conn.read(worksheet="Sites", ttl=0)
+                                # If it FAILS AGAIN, stop gracefully
+                                st.error("Server is cooling down. Please wait 1 minute and try again.")
+                                st.stop() 
+                        # ----------------------------------
+
+                        # Add the new site to the fresh list
+                        final_sites = pd.concat([fresh_sites, new_row], ignore_index=True)
+                        save_data(final_sites, "Sites")
                         
-                        # 3. Add to the FRESH list
-                            final_sites = pd.concat([fresh_sites, new_row], ignore_index=True)
-                        
-                        # 4. Save
-                            save_data(final_sites, "Sites")
             with c2:
                 if not df_sites.empty:
                     del_site = st.selectbox("Remove Site", df_sites["Name"].unique())
