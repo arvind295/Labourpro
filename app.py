@@ -25,7 +25,6 @@ def fetch_data(table):
 
 def get_billing_start_date(entry_date):
     """Calculates the Saturday that started the billing week."""
-    # Weekday: Mon=0 ... Sat=5 ... Sun=6
     days_since_saturday = (entry_date.weekday() + 2) % 7
     return entry_date - timedelta(days=days_since_saturday)
 
@@ -78,20 +77,19 @@ with st.sidebar:
 
 st.title("🏗️ Labour Management Pro")
 
-# --- ADMIN NAVIGATION ---
+# --- NAVIGATION ---
 tabs = ["📝 Daily Entry"]
 if my_role == "admin":
-    # Added "Payment Summary" as the requested separate tab
     tabs += ["📊 Weekly Bill (Details)", "💰 Payment Summary", "📍 Sites", "👷 Contractors", "👥 Users"]
 
 current_tab = st.radio("Navigate", tabs, horizontal=True, label_visibility="collapsed")
 st.divider()
 
 # ==========================
-# 1. DAILY ENTRY 
+# 1. DAILY ENTRY (WITH EDIT LIMIT)
 # ==========================
 if current_tab == "📝 Daily Entry":
-    st.subheader("📝 New Daily Entry")
+    st.subheader("📝 Daily Work Entry")
     
     df_sites = fetch_data("sites")
     df_con = fetch_data("contractors")
@@ -99,16 +97,53 @@ if current_tab == "📝 Daily Entry":
     if df_sites.empty or df_con.empty:
         st.warning("⚠️ Admin must add Sites and Contractors first.")
     else:
+        # Selection Inputs
         c1, c2, c3 = st.columns(3)
         entry_date = c1.date_input("Date of Work", date.today())
         site = c2.selectbox("Site", df_sites["name"].unique())
         contractor = c3.selectbox("Contractor", df_con["name"].unique())
         
         st.write("---")
+
+        # --- CHECK FOR EXISTING ENTRY ---
+        existing_entry = None
+        try:
+            resp = supabase.table("entries").select("*") \
+                .eq("date", str(entry_date)) \
+                .eq("site", site) \
+                .eq("contractor", contractor) \
+                .execute()
+            if resp.data:
+                existing_entry = resp.data[0]
+        except:
+            pass
+
+        # --- MODE: NEW vs EDIT ---
+        mode = "new"
+        current_edits = 0
+        
+        # Default values
+        val_m, val_h, val_l = 0, 0, 0
+
+        if existing_entry:
+            mode = "edit"
+            current_edits = existing_entry.get("edit_count", 0)
+            val_m = existing_entry["count_mason"]
+            val_h = existing_entry["count_helper"]
+            val_l = existing_entry["count_ladies"]
+            
+            if current_edits >= 2:
+                st.error(f"⛔ Locked: This entry has been edited 2 times already.")
+                st.warning(f"Existing Data: Masons: {val_m} | Helpers: {val_h} | Ladies: {val_l}")
+                st.stop() # Stop here, don't show inputs
+            else:
+                st.warning(f"✏️ Editing existing entry. (Edits used: {current_edits}/2)")
+
+        # Inputs
         k1, k2, k3 = st.columns(3)
-        n_mason = k1.number_input("🧱 Masons", min_value=0, value=0)
-        n_helper = k2.number_input("👷 Helpers", min_value=0, value=0)
-        n_ladies = k3.number_input("👩 Ladies", min_value=0, value=0)
+        n_mason = k1.number_input("🧱 Masons", min_value=0, value=val_m)
+        n_helper = k2.number_input("👷 Helpers", min_value=0, value=val_h)
+        n_ladies = k3.number_input("👩 Ladies", min_value=0, value=val_l)
 
         # Rate Logic
         rate_row = None
@@ -122,18 +157,16 @@ if current_tab == "📝 Daily Entry":
                         (n_helper * rate_row['rate_helper']) + \
                         (n_ladies * rate_row['rate_ladies'])
 
+            # Show Prices (Admin Only)
             if my_role == "admin":
-                st.info(f"""
-                **💰 ADMIN VIEW:**
-                Rates: Mason ₹{rate_row['rate_mason']} | Helper ₹{rate_row['rate_helper']} | Ladies ₹{rate_row['rate_ladies']}
-                **Total for today: ₹{total_est}**
-                """)
-            else:
-                st.info("✅ Count entered. Click Save to submit.")
+                st.info(f"💰 **Total: ₹{total_est}** (M: {rate_row['rate_mason']}, H: {rate_row['rate_helper']}, L: {rate_row['rate_ladies']})")
 
-            if st.button("✅ Save Entry", type="primary"):
+            # BUTTON LOGIC
+            btn_text = "✅ Save Entry" if mode == "new" else f"🔄 Update Entry (Attempt {current_edits + 1}/2)"
+            
+            if st.button(btn_text, type="primary"):
                 if total_est > 0:
-                    supabase.table("entries").insert({
+                    data_payload = {
                         "date": str(entry_date),
                         "site": site,
                         "contractor": contractor,
@@ -141,8 +174,20 @@ if current_tab == "📝 Daily Entry":
                         "count_helper": n_helper,
                         "count_ladies": n_ladies,
                         "total_cost": total_est
-                    }).execute()
-                    st.success("Saved Successfully!")
+                    }
+
+                    if mode == "new":
+                        # Insert New
+                        data_payload["edit_count"] = 0
+                        supabase.table("entries").insert(data_payload).execute()
+                        st.success("Saved Successfully!")
+                    
+                    else:
+                        # Update Existing
+                        data_payload["edit_count"] = current_edits + 1
+                        supabase.table("entries").update(data_payload).eq("id", existing_entry["id"]).execute()
+                        st.success(f"Updated! ({data_payload['edit_count']}/2 edits used)")
+                    
                     st.rerun()
                 else:
                     st.error("Please enter at least one labor count.")
@@ -150,26 +195,21 @@ if current_tab == "📝 Daily Entry":
             st.error("⚠️ No active rates found.")
 
 # ==========================
-# 2. WEEKLY BILL (DETAILED)
+# 2. WEEKLY BILL (DETAILED FLAT VIEW)
 # ==========================
 elif current_tab == "📊 Weekly Bill (Details)":
-    st.subheader("📊 Detailed Bill (By Site)")
-    st.caption("Shows separate bills for each site per week.")
-    
+    st.subheader("📊 Detailed Site Log")
     df_e = fetch_data("entries")
     if not df_e.empty:
         df_e["date"] = pd.to_datetime(df_e["date"]).dt.date
         df_e["start_date"] = df_e["date"].apply(get_billing_start_date)
         df_e["end_date"] = df_e["start_date"] + timedelta(days=6)
         
-        # Label: "14 Dec (Sat) - 20 Dec (Fri)"
         df_e["Billing Period"] = df_e.apply(
             lambda x: f"{x['start_date'].strftime('%d %b')} (Sat) - {x['end_date'].strftime('%d %b')} (Fri)", 
             axis=1
         )
         
-        # GROUP BY: Period -> Contractor -> SITE
-        # This keeps the sites separate as requested
         report = df_e.groupby(["Billing Period", "start_date", "contractor", "site"])[
             ["total_cost", "count_mason", "count_helper", "count_ladies"]
         ].sum().reset_index()
@@ -186,19 +226,14 @@ elif current_tab == "📊 Weekly Bill (Details)":
         st.info("No data available.")
 
 # ==========================
-# 3. PAYMENT SUMMARY (NEW!)
+# 3. PAYMENT SUMMARY (EXPANDABLE)
 # ==========================
 elif current_tab == "💰 Payment Summary":
-    st.subheader("💰 Payment Dashboard")
+    st.subheader("💰 Weekly Payment Dashboard")
     
     df_e = fetch_data("entries")
     if not df_e.empty:
         df_e["date"] = pd.to_datetime(df_e["date"]).dt.date
-        
-        # --- PART A: GRAND TOTAL PER WEEK (All Sites Combined) ---
-        st.write("### 1. Weekly Grand Totals (Payable Amount)")
-        st.caption("This combines all sites into one final check amount per week.")
-        
         df_e["start_date"] = df_e["date"].apply(get_billing_start_date)
         df_e["end_date"] = df_e["start_date"] + timedelta(days=6)
         df_e["Billing Period"] = df_e.apply(
@@ -206,43 +241,36 @@ elif current_tab == "💰 Payment Summary":
             axis=1
         )
         
-        # Group only by Period & Contractor (Sites are summed together)
-        weekly_grand = df_e.groupby(["Billing Period", "start_date", "contractor"])["total_cost"].sum().reset_index()
-        weekly_grand = weekly_grand.sort_values("start_date", ascending=False)
+        weeks_df = df_e[["Billing Period", "start_date"]].drop_duplicates().sort_values("start_date", ascending=False)
         
-        st.dataframe(
-            weekly_grand[["Billing Period", "contractor", "total_cost"]],
-            column_config={
-                "total_cost": st.column_config.NumberColumn("Grand Total (₹)", format="₹%d"),
-                "contractor": "Contractor Name"
-            },
-            use_container_width=True,
-            hide_index=True
-        )
-        
-        st.divider()
-        
-        # --- PART B: LIFETIME TOTAL (Site Wise) ---
-        st.write("### 2. Lifetime Total (Site-Wise)")
-        st.caption("Total value of work done at each site since the beginning.")
-        
-        # Group by Contractor & Site (No Date filter = All time)
-        lifetime_site = df_e.groupby(["contractor", "site"])["total_cost"].sum().reset_index()
-        
-        st.dataframe(
-            lifetime_site,
-            column_config={
-                "total_cost": st.column_config.NumberColumn("Total Till Date (₹)", format="₹%d"),
-            },
-            use_container_width=True,
-            hide_index=True
-        )
-        
+        for _, week_row in weeks_df.iterrows():
+            current_period = week_row["Billing Period"]
+            st.markdown(f"### 🗓️ Week: {current_period}")
+            
+            week_data = df_e[df_e["Billing Period"] == current_period]
+            contractors_in_week = week_data.groupby("contractor")
+            
+            for contractor_name, contractor_df in contractors_in_week:
+                grand_total = contractor_df["total_cost"].sum()
+                
+                with st.expander(f"👷 **{contractor_name}** —  Total: **₹{grand_total:,}**"):
+                    breakdown = contractor_df.groupby("site")[["total_cost", "count_mason", "count_helper", "count_ladies"]].sum().reset_index()
+                    st.dataframe(
+                        breakdown,
+                        column_config={
+                            "site": "Site Name",
+                            "total_cost": st.column_config.NumberColumn("Site Total (₹)", format="₹%d")
+                        },
+                        use_container_width=True,
+                        hide_index=True
+                    )
+            st.divider()
+
     else:
         st.info("No data available.")
 
 # ==========================
-# 4. SITES (Duplicate Check)
+# 4. SITES 
 # ==========================
 elif current_tab == "📍 Sites":
     st.subheader("📍 Manage Sites")
@@ -252,7 +280,6 @@ elif current_tab == "📍 Sites":
     new_s = st.text_input("New Site Name")
     if st.button("Add Site"):
         existing_sites = df_s["name"].tolist() if not df_s.empty else []
-            
         if new_s in existing_sites:
             st.error(f"❌ Site '{new_s}' already exists!")
         elif new_s:
