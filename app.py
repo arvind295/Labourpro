@@ -178,16 +178,23 @@ if user_type == "Admin Dashboard":
                         if not df_sites.empty and new_site in df_sites["Name"].values:
                             st.error("Site exists.")
                         else:
-                            # 1. Create the new row for the site
+                        # 1. Create the new row
                             new_row = pd.DataFrame([{"Name": new_site}])
                         
-                            # 2. DOWNLOAD FRESH DATA (This fixes the deletion bug!)
+                        # 2. SAFE DOWNLOAD (Retry if Google is busy)
+                        try:
+                            fresh_sites = conn.read(worksheet="Sites", ttl=0)
+                        except Exception:
+                            st.warning("Google is busy. Retrying in 3 seconds...")
+                            import time
+                            time.sleep(3)
+                            # Try one last time
                             fresh_sites = conn.read(worksheet="Sites", ttl=0)
                         
-                            # 3. Add to the FRESH list, not the old one
-                            final_sites = pd.concat([fresh_sites, new_row], ignore_index=True)
+                        # 3. Add to the FRESH list
+                        final_sites = pd.concat([fresh_sites, new_row], ignore_index=True)
                         
-                        # 4. Save (Auto-refresh happens inside save_data now)
+                        # 4. Save
                         save_data(final_sites, "Sites")
             with c2:
                 if not df_sites.empty:
