@@ -25,28 +25,41 @@ except Exception:
     st.error("⚠️ Supabase connection failed. Check secrets.toml.")
     st.stop()
 
-# --- 3. CUSTOM STYLING (THE FINAL "ROOT VARIABLE" FIX) ---
+# --- 3. CUSTOM STYLING (SUPERCHARGED LIGHT MODE) ---
 def apply_custom_styling():
     st.markdown("""
         <style>
-        /* 1. OVERRIDE STREAMLIT'S INTERNAL THEME VARIABLES 
-           This tricks Streamlit into rendering everything in Light Mode 
-           regardless of your computer's settings. */
+        /* 1. FORCE BROWSER TO RENDER IN LIGHT MODE */
         :root {
+            color-scheme: light !important;
             --primary-color: #F39C12;
             --background-color: #F4F6F9;
-            --secondary-background-color: #FFFFFF; /* Controls Dropdowns & Inputs */
+            --secondary-background-color: #FFFFFF;
             --text-color: #2C3E50;
-            --font: "sans-serif";
         }
 
-        /* 2. FORCE PAGE BACKGROUND */
+        /* 2. MAIN BACKGROUND */
         .stApp {
             background-color: #F4F6F9 !important;
         }
 
-        /* 3. FIX DROPDOWNS (The "Navigate" Box) & INPUTS 
-           This forces the black box in your screenshot to be White. */
+        /* 3. FIX THE DROPDOWN LIST (POPOVER) - The "Black Box" Fix */
+        div[data-baseweb="popover"], div[data-baseweb="menu"], ul[role="listbox"] {
+            background-color: #FFFFFF !important;
+            border: 1px solid #E0E0E0 !important;
+        }
+        /* Fix the options inside the dropdown */
+        li[role="option"], li[data-baseweb="option"] {
+            color: #2C3E50 !important;
+            background-color: #FFFFFF !important;
+        }
+        /* Highlight color when hovering an option */
+        li[role="option"]:hover, li[role="option"][aria-selected="true"] {
+            background-color: #FFE0B2 !important; /* Light Orange */
+            color: #000000 !important;
+        }
+
+        /* 4. FIX INPUT BOXES & DROPDOWN CLOSED STATE */
         div[data-baseweb="select"] > div, 
         div[data-baseweb="base-input"], 
         div[data-baseweb="input"] {
@@ -54,39 +67,32 @@ def apply_custom_styling():
             color: #000000 !important;
             border: 1px solid #D0D3D4 !important;
         }
-        
-        /* The Dropdown Popup Menu (The list that opens up) */
-        ul[data-baseweb="menu"], div[data-baseweb="popover"] {
-            background-color: #FFFFFF !important;
-        }
-        
-        /* The Text Inside Dropdown Options */
-        li, span, div[data-baseweb="select"] span {
-            color: #2C3E50 !important;
-        }
-
-        /* 4. FIX TYPING AREAS */
         input, textarea {
             color: #000000 !important;
             background-color: #FFFFFF !important;
-            caret-color: #000000 !important; /* The typing cursor */
+            caret-color: #000000 !important;
         }
 
-        /* 5. FIX "GHOST" LABELS (Text above inputs) */
-        label, .stMarkdown p, .stRadio label {
+        /* 5. FIX EXPANDERS (The Payment Summary Headers) */
+        .streamlit-expanderHeader {
+            background-color: #FFFFFF !important;
+            color: #000000 !important;
+            border: 1px solid #D0D3D4;
+            border-radius: 8px;
+        }
+        
+        /* 6. FIX DATAFRAME HEADERS (Try to force light headers) */
+        [data-testid="stDataFrame"] {
+            background-color: #FFFFFF !important;
+            border: 1px solid #E0E0E0 !important;
+        }
+
+        /* 7. GENERAL TEXT COLORS */
+        h1, h2, h3, h4, h5, h6, p, label, span, div {
             color: #2C3E50 !important;
         }
-
-        /* 6. CARDS (White Containers) */
-        [data-testid="stVerticalBlock"] > [style*="flex-direction: column;"] > [data-testid="stVerticalBlock"] {
-            background-color: #FFFFFF;
-            padding: 24px;
-            border-radius: 12px;
-            box-shadow: 0 4px 12px rgba(0,0,0,0.05);
-            border: 1px solid #E0E0E0;
-        }
-
-        /* 7. BUTTONS */
+        
+        /* 8. BUTTONS */
         div.stButton > button[kind="primary"] {
             background-color: #F39C12 !important;
             color: white !important;
@@ -97,13 +103,13 @@ def apply_custom_styling():
             color: #2C3E50 !important;
             border: 1px solid #BDC3C7;
         }
-        /* Fix the +/- buttons on number inputs */
+        /* +/- Buttons on number inputs */
         button[kind="secondaryForm"] {
-            background-color: #FFFFFF !important;
-            color: #2C3E50 !important;
+            background-color: #F0F2F5 !important;
+            color: #000000 !important;
         }
 
-        /* 8. HIDE DEFAULT MENU */
+        /* 9. HIDE DEFAULT MENU */
         #MainMenu {visibility: hidden;}
         footer {visibility: hidden;}
         </style>
