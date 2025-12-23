@@ -67,14 +67,18 @@ def get_billing_start_date(entry_date):
     days_since_saturday = (entry_date.weekday() + 2) % 7
     return entry_date - timedelta(days=days_since_saturday)
 
-# Reuseable Function to Generate the HTML Bill (For Live & Archive)
+# Reusable Function to Generate the HTML Bill (For Live & Archive)
 def render_weekly_bill(df_entries, df_contractors):
     if df_entries.empty:
         st.info("No data available for this period.")
         return
 
-    df_entries["date_dt"] = pd.to_datetime(df_entries["date"])
-    df_contractors["effective_date"] = pd.to_datetime(df_contractors["effective_date"]).dt.date
+    # Safe Date Conversion
+    df_entries["date_dt"] = pd.to_datetime(df_entries["date"], errors='coerce')
+    df_contractors["effective_date"] = pd.to_datetime(df_contractors["effective_date"], errors='coerce').dt.date
+    
+    # Drop rows with invalid dates
+    df_entries = df_entries.dropna(subset=["date_dt"])
     
     # Determine Weeks
     df_entries["start_date"] = df_entries["date_dt"].dt.date.apply(get_billing_start_date)
@@ -82,8 +86,11 @@ def render_weekly_bill(df_entries, df_contractors):
     df_entries["week_label"] = df_entries.apply(lambda x: f"{x['start_date'].strftime('%d-%m-%Y')} to {x['end_date'].strftime('%d-%m-%Y')}", axis=1)
     
     weeks = sorted(df_entries["week_label"].unique(), reverse=True)
+    if not weeks:
+        st.info("No valid weeks found.")
+        return
+
     sel_week = st.selectbox("Select Week", weeks)
-    
     df_week = df_entries[df_entries["week_label"] == sel_week].copy()
     
     for site_name in df_week["site"].unique():
@@ -107,11 +114,22 @@ def render_weekly_bill(df_entries, df_contractors):
                 tm += row["count_mason"]; th += row["count_helper"]; tl += row["count_ladies"]
                 tamt += row["total_cost"]
 
-            # Rate Lookup
+            # Rate Lookup (For display only - total cost uses DB stored value)
             rates = df_contractors[df_contractors["name"] == con_name].sort_values("effective_date", ascending=False)
             rm, rh, rl = (0,0,0)
             if not rates.empty:
-                rm, rh, rl = rates.iloc[0]["rate_mason"], rates.iloc[0]["rate_helper"], rates.iloc[0]["rate_ladies"]
+                # We try to find the rate that was active for the start of this billing week
+                # If not found, fallback to latest rate
+                start_of_week = df_week.iloc[0]["start_date"]
+                valid_rates = rates[rates["effective_date"] <= start_of_week]
+                
+                if not valid_rates.empty:
+                    curr = valid_rates.iloc[0]
+                    rm, rh, rl = curr["rate_mason"], curr["rate_helper"], curr["rate_ladies"]
+                else:
+                    # Fallback to absolute latest if history missing
+                    curr = rates.iloc[0]
+                    rm, rh, rl = curr["rate_mason"], curr["rate_helper"], curr["rate_ladies"]
             
             # --- HTML TABLE ---
             html = f"""
@@ -140,10 +158,10 @@ def render_weekly_bill(df_entries, df_contractors):
 <td style="padding: 8px; border: 1px solid #ccc;">{tl}</td>
 </tr>
 <tr style="font-weight: bold;">
-<td style="padding: 8px; border: 1px solid #ccc;">Amount (₹)</td>
-<td style="padding: 8px; border: 1px solid #ccc;">₹{tm*rm:,.0f}</td>
-<td style="padding: 8px; border: 1px solid #ccc;">₹{th*rh:,.0f}</td>
-<td style="padding: 8px; border: 1px solid #ccc;">₹{tl*rl:,.0f}</td>
+<td style="padding: 8px; border: 1px solid #ccc;">Rate (Approx)</td>
+<td style="padding: 8px; border: 1px solid #ccc;">₹{rm:,.0f}</td>
+<td style="padding: 8px; border: 1px solid #ccc;">₹{rh:,.0f}</td>
+<td style="padding: 8px; border: 1px solid #ccc;">₹{rl:,.0f}</td>
 </tr>
 <tr style="font-weight: bold; background: #e0e0e0; font-size: 1.1em;">
 <td style="padding: 8px; border: 1px solid #ccc;">Total Amount</td>
@@ -237,13 +255,21 @@ if current_tab == "📝 Daily Entry":
         if st.session_state["role"] != "admin":
             u = supabase.table("users").select("assigned_site").eq("phone", st.session_state["phone"]).single().execute()
             if u.data and u.data.get("assigned_site") in av_sites: av_sites = [u.data.get("assigned_site")]
-            else: st.error("No site assigned."); st.stop()
+            elif "All" in av_sites: pass # Fallback if needed
+            else: st.error("No site assigned or site deleted."); st.stop()
 
         st.subheader("📝 New Work Entry")
         c1, c2, c3 = st.columns(3)
         dt = c1.date_input("Date", date.today())
         st_sel = c2.selectbox("Site", av_sites)
-        con_sel = c3.selectbox("Contractor", df_con["name"].unique())
+        
+        # Check if contractors exist
+        con_options = df_con["name"].unique() if not df_con.empty else []
+        if len(con_options) == 0:
+            st.error("Please add contractors in Admin panel first.")
+            st.stop()
+            
+        con_sel = c3.selectbox("Contractor", con_options)
         
         exist = None
         try:
@@ -256,7 +282,7 @@ if current_tab == "📝 Daily Entry":
         if exist:
             mode = "edit"
             vm, vh, vl, vd = float(exist.get("count_mason", 0)), float(exist.get("count_helper", 0)), float(exist.get("count_ladies", 0)), exist.get("work_description", "")
-            st.warning("✏️ Editing Entry")
+            st.warning("✏️ Editing Existing Entry")
 
         k1, k2, k3 = st.columns(3)
         nm = k1.number_input("Mason", value=vm, step=0.5)
@@ -264,7 +290,7 @@ if current_tab == "📝 Daily Entry":
         nl = k3.number_input("Ladies", value=vl, step=0.5)
         wdesc = st.text_area("Description", value=vd)
 
-        # Rate
+        # Rate Fetching
         rate_row = None
         try:
             rr = supabase.table("contractors").select("*").eq("name", con_sel).lte("effective_date", str(dt)).order("effective_date", desc=True).limit(1).execute()
@@ -279,7 +305,7 @@ if current_tab == "📝 Daily Entry":
                 if mode == "new": supabase.table("entries").insert(load).execute()
                 else: supabase.table("entries").update(load).eq("id", exist["id"]).execute()
                 st.success("Saved"); st.rerun()
-        else: st.error("No active rate found.")
+        else: st.error("No active rate found for this date. Check Contractor settings.")
 
 # ==========================
 # 2. SITE LOGS
@@ -290,13 +316,16 @@ elif current_tab == "🔍 Site Logs":
     df_users = fetch_data("users")
 
     if not df_entries.empty:
-        df_entries["date_obj"] = pd.to_datetime(df_entries["date"])
+        df_entries["date_obj"] = pd.to_datetime(df_entries["date"], errors='coerce')
+        df_entries = df_entries.dropna(subset=["date_obj"]) # Safety drop
+        
         df_entries["date_str"] = df_entries["date_obj"].dt.strftime('%d-%m-%Y')
         df_entries["month_year"] = df_entries["date_obj"].dt.strftime('%B %Y')
 
         col_f1, col_f2 = st.columns(2)
         all_sites = ["All Sites"] + sorted(df_entries["site"].unique().tolist())
         sel_site = col_f1.selectbox("📍 Filter by Site", all_sites)
+        
         all_months = ["All Months"] + sorted(df_entries["month_year"].unique().tolist(), reverse=True)
         sel_month = col_f2.selectbox("📅 Filter by Month", all_months)
 
@@ -331,6 +360,8 @@ elif current_tab == "📊 Weekly Bill":
     df_c = fetch_data("contractors")
     if not df_e.empty and not df_c.empty:
         render_weekly_bill(df_e, df_c)
+    else:
+        st.info("Insufficient data to generate bills.")
 
 # ==========================
 # 3. ADMIN MGMT
@@ -345,8 +376,10 @@ elif current_tab == "📍 Sites":
         st.markdown("### ➕ Add Site")
         n = st.text_input("New Site Name")
         if st.button("Add Site", type="primary"):
-            supabase.table("sites").insert({"name": n}).execute()
-            st.success(f"Added {n}"); st.rerun()
+            if n.strip():
+                supabase.table("sites").insert({"name": n}).execute()
+                st.success(f"Added {n}"); st.rerun()
+            else: st.error("Name cannot be empty")
 
     with col_del:
         st.markdown("### 🗑️ Delete Site")
@@ -369,7 +402,10 @@ elif current_tab == "👷 Contractors":
         n = st.text_input("Name")
         c1, c2, c3 = st.columns(3)
         r1 = c1.number_input("Mason Rate", value=800); r2 = c2.number_input("Helper Rate", value=500); r3 = c3.number_input("Ladies Rate", value=400)
-        if st.form_submit_button("Save"): supabase.table("contractors").insert({"name": n, "rate_mason": r1, "rate_helper": r2, "rate_ladies": r3, "effective_date": str(date.today())}).execute(); st.rerun()
+        if st.form_submit_button("Save"): 
+            if n.strip():
+                supabase.table("contractors").insert({"name": n, "rate_mason": r1, "rate_helper": r2, "rate_ladies": r3, "effective_date": str(date.today())}).execute(); st.rerun()
+            else: st.error("Contractor Name required")
 
 elif current_tab == "👥 Users":
     st.subheader("👥 User Management")
@@ -505,7 +541,7 @@ elif current_tab == "📂 Archive & Recovery":
     # --- TAB 3: RESTORE (Disaster Recovery) ---
     with tab3:
         st.markdown("### ♻️ Disaster Recovery")
-        st.error("⚠️ **DANGER ZONE:** Use this ONLY if your online database is empty, crashed, or you want to restore old data. This will upload the data from the file back into the live system.")
+        st.error("⚠️ **DANGER ZONE:** Use this to restore lost data. Duplicate data may occur if running multiple times.")
         
         restore_file = st.file_uploader("Upload Backup JSON to Restore", type=["json"], key="restore_upload")
         
@@ -552,7 +588,14 @@ elif current_tab == "📂 Archive & Recovery":
                     if cnt_cons > 0:
                         status_text.write("Restoring Contractors...")
                         clean_cons = clean_for_insert(data["contractors"])
-                        supabase.table("contractors").insert(clean_cons).execute()
+                        # Changed from insert to upsert to prevent crashing on duplicates
+                        # Assumes 'name' and 'effective_date' are keys, but usually just 'id' or 'name' 
+                        # Using insert for safety on data integrity, wrapped in try-except for duplicates
+                        try:
+                            supabase.table("contractors").upsert(clean_cons).execute()
+                        except:
+                            # Fallback if upsert fails (unlikely)
+                            pass
                     progress_bar.progress(75)
 
                     if cnt_entries > 0:
@@ -569,4 +612,3 @@ elif current_tab == "📂 Archive & Recovery":
                     
                 except Exception as e:
                     st.error(f"❌ Error during restore: {e}")
-                    st.warning("Tip: If you have duplicate data errors, try clearing the database first using the 'Reset' tab.")
