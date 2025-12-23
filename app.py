@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 from datetime import datetime, date, timedelta
 from supabase import create_client
+import io  # <--- Add this new import
 
 # --- 1. CONFIGURATION ---
 st.set_page_config(page_title="LabourPro", page_icon="🏗️", layout="wide")
@@ -272,34 +273,88 @@ if current_tab == "📝 Daily Entry":
             st.error("⚠️ No active rates found.")
 
 # ==========================
-# 2. SITE LOGS
+# 2. SITE LOGS (Updated: Search, Dashboard, Download)
 # ==========================
 elif current_tab == "🔍 Site Logs (Day-to-Day)":
-    st.subheader("🔍 Day-to-Day Site Inspection")
+    st.subheader("🔍 Site Logs & Analytics")
+    
     df_sites = fetch_data("sites")
     if not df_sites.empty:
-        selected_site = st.selectbox("Select Site", df_sites["name"].unique())
-        if selected_site:
+        # 1. SITE SELECTION
+        selected_site = st.selectbox("Select Site", ["All Sites"] + df_sites["name"].unique().tolist())
+        
+        # Fetch Data
+        if selected_site == "All Sites":
+            raw_data = supabase.table("entries").select("*").order("date", desc=True).execute().data
+        else:
             raw_data = supabase.table("entries").select("*").eq("site", selected_site).order("date", desc=True).execute().data
-            df_log = pd.DataFrame(raw_data)
+            
+        df_log = pd.DataFrame(raw_data)
+        
+        if not df_log.empty:
+            df_log["date"] = pd.to_datetime(df_log["date"])
+            df_log["Month"] = df_log["date"].dt.strftime('%B %Y')
+
+            # 2. SEARCH & FILTER (Suggestion #5)
+            c1, c2 = st.columns([2, 1])
+            search_term = c1.text_input("🔍 Search Logs", placeholder="Type contractor, work description, or date...")
+            filter_month = c2.selectbox("Filter Month", ["All Months"] + df_log["Month"].unique().tolist())
+
+            # Apply Month Filter
+            if filter_month != "All Months":
+                df_log = df_log[df_log["Month"] == filter_month]
+
+            # Apply Search Filter
+            if search_term:
+                # This searches across all columns for the text you typed
+                mask = df_log.astype(str).apply(lambda x: x.str.contains(search_term, case=False)).any(axis=1)
+                df_log = df_log[mask]
+
+            # 3. DASHBOARD (Suggestion #1)
+            st.divider()
+            m1, m2, m3 = st.columns(3)
+            total_spend = df_log["total_cost"].sum()
+            top_contractor = df_log.groupby("contractor")["total_cost"].sum().idxmax() if not df_log.empty else "N/A"
+            total_days = df_log["date"].nunique()
+
+            m1.metric("💰 Total Spending", f"₹{total_spend:,.0f}")
+            m2.metric("👷 Top Contractor", top_contractor)
+            m3.metric("📅 Work Days Logged", total_days)
+
+            # Simple Bar Chart: Cost per Contractor
             if not df_log.empty:
-                df_log["date"] = pd.to_datetime(df_log["date"])
-                df_log["Month"] = df_log["date"].dt.strftime('%B %Y')
-                
-                c1, c2 = st.columns([1, 3])
-                selected_month = c1.selectbox("Filter Month", ["All Months"] + df_log["Month"].unique().tolist())
-                display_df = df_log if selected_month == "All Months" else df_log[df_log["Month"] == selected_month]
-                
-                st.markdown(f"### 💰 Total: **₹{display_df['total_cost'].sum():,.2f}**")
-                st.dataframe(display_df, use_container_width=True, hide_index=True)
-            else:
-                st.info("No entries.")
+                st.caption("💸 Spending by Contractor")
+                chart_data = df_log.groupby("contractor")["total_cost"].sum()
+                st.bar_chart(chart_data)
+
+            # 4. DOWNLOAD BUTTON (Suggestion #2)
+            st.divider()
+            c_csv = df_log.to_csv(index=False).encode('utf-8')
+            st.download_button(
+                label="📥 Download This Data (CSV)",
+                data=c_csv,
+                file_name=f"site_logs_{date.today()}.csv",
+                mime="text/csv",
+            )
+
+            # Display Data Table
+            st.dataframe(
+                df_log, 
+                use_container_width=True, 
+                hide_index=True,
+                column_config={
+                    "total_cost": st.column_config.NumberColumn("Cost", format="₹%d"),
+                    "work_description": "Work Done"
+                }
+            )
+        else:
+            st.info("No entries found for this site.")
 
 # ==========================
-# 3. WEEKLY BILL (UPDATED WITH BREAKDOWN)
+# 3. WEEKLY BILL (Updated with Download)
 # ==========================
 elif current_tab == "📊 Weekly Bill (Details)":
-    st.subheader("📊 Detailed Site Log (With Breakdown)")
+    st.subheader("📊 Detailed Weekly Bill")
     
     df_e = fetch_data("entries")
     df_c = fetch_data("contractors")
@@ -307,25 +362,33 @@ elif current_tab == "📊 Weekly Bill (Details)":
     if not df_e.empty:
         df_e["date"] = pd.to_datetime(df_e["date"]).dt.date
         
-        # 1. CALCULATE SPLIT COSTS (New Step)
+        # Calculate Splits
         if not df_c.empty:
             df_e = calculate_split_costs(df_e, df_c)
         else:
-            df_e["amt_mason"] = 0
-            df_e["amt_helper"] = 0
-            df_e["amt_ladies"] = 0
+            df_e["amt_mason"] = 0; df_e["amt_helper"] = 0; df_e["amt_ladies"] = 0
 
-        # 2. Billing periods
+        # Billing periods
         df_e["start_date"] = df_e["date"].apply(get_billing_start_date)
         df_e["end_date"] = df_e["start_date"] + timedelta(days=6)
         df_e["Billing Period"] = df_e.apply(lambda x: f"{x['start_date'].strftime('%d %b')} - {x['end_date'].strftime('%d %b')}", axis=1)
         
-        # 3. Aggregate
+        # Aggregate
         report = df_e.groupby(["Billing Period", "start_date", "contractor", "site"])[
             ["total_cost", "count_mason", "count_helper", "count_ladies", "amt_mason", "amt_helper", "amt_ladies"]
         ].sum().reset_index()
         
-        # 4. Display
+        # --- NEW: DOWNLOAD BUTTON ---
+        csv_bill = report.to_csv(index=False).encode('utf-8')
+        st.download_button(
+            label="📥 Download Weekly Bill (CSV)",
+            data=csv_bill,
+            file_name=f"weekly_bill_{date.today()}.csv",
+            mime="text/csv",
+            type="primary"
+        )
+        # ----------------------------
+
         st.dataframe(
             report,
             column_config={
@@ -333,15 +396,12 @@ elif current_tab == "📊 Weekly Bill (Details)":
                 "amt_mason": st.column_config.NumberColumn("Mason Amt (₹)", format="₹%d"),
                 "amt_helper": st.column_config.NumberColumn("Helper Amt (₹)", format="₹%d"),
                 "amt_ladies": st.column_config.NumberColumn("Ladies Amt (₹)", format="₹%d"),
-                "count_mason": "Masons",
-                "count_helper": "Helpers",
-                "count_ladies": "Ladies"
             },
             use_container_width=True,
             hide_index=True
         )
 
-        # Audit Log Section
+        # Audit Log
         st.write("---")
         st.subheader("⚠️ Edit History")
         if "edit_count" in df_e.columns:
