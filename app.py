@@ -5,7 +5,12 @@ from datetime import datetime, date, timedelta
 from supabase import create_client
 
 # --- 1. CONFIGURATION ---
-st.set_page_config(page_title="LabourPro", page_icon="🏗️", layout="wide")
+st.set_page_config(
+    page_title="LabourPro", 
+    page_icon="🏗️", 
+    layout="wide", 
+    initial_sidebar_state="expanded"
+)
 
 # Try to get password from secrets, otherwise default to admin123
 try:
@@ -25,41 +30,48 @@ except Exception:
     st.error("⚠️ Supabase connection failed. Check secrets.toml.")
     st.stop()
 
-# --- 3. CUSTOM STYLING (SUPERCHARGED LIGHT MODE) ---
+# --- 3. CUSTOM STYLING (THE FINAL "ALL-WHITE" FIX) ---
 def apply_custom_styling():
     st.markdown("""
         <style>
-        /* 1. FORCE BROWSER TO RENDER IN LIGHT MODE */
+        /* --- A. GLOBAL RESET TO LIGHT MODE --- */
         :root {
-            color-scheme: light !important;
             --primary-color: #F39C12;
             --background-color: #F4F6F9;
             --secondary-background-color: #FFFFFF;
             --text-color: #2C3E50;
         }
-
-        /* 2. MAIN BACKGROUND */
+        
+        /* Force the main app background to be light grey */
         .stApp {
             background-color: #F4F6F9 !important;
-        }
-
-        /* 3. FIX THE DROPDOWN LIST (POPOVER) - The "Black Box" Fix */
-        div[data-baseweb="popover"], div[data-baseweb="menu"], ul[role="listbox"] {
-            background-color: #FFFFFF !important;
-            border: 1px solid #E0E0E0 !important;
-        }
-        /* Fix the options inside the dropdown */
-        li[role="option"], li[data-baseweb="option"] {
             color: #2C3E50 !important;
-            background-color: #FFFFFF !important;
-        }
-        /* Highlight color when hovering an option */
-        li[role="option"]:hover, li[role="option"][aria-selected="true"] {
-            background-color: #FFE0B2 !important; /* Light Orange */
-            color: #000000 !important;
         }
 
-        /* 4. FIX INPUT BOXES & DROPDOWN CLOSED STATE */
+        /* --- B. SIDEBAR REPAIR (Fixing the dark sidebar) --- */
+        [data-testid="stSidebar"] {
+            background-color: #FFFFFF !important;
+            border-right: 1px solid #E0E0E0;
+        }
+        /* Fix text colors in Sidebar */
+        [data-testid="stSidebar"] h1, [data-testid="stSidebar"] h2, [data-testid="stSidebar"] h3, 
+        [data-testid="stSidebar"] p, [data-testid="stSidebar"] span, [data-testid="stSidebar"] label {
+            color: #2C3E50 !important;
+        }
+
+        /* --- C. FIX ALERT BOXES (The "Role: ADMIN" box) --- */
+        /* Force st.info / st.success to use Light Mode colors instead of Dark Mode Navy Blue */
+        div.stAlert {
+            background-color: #EFF6FF !important; /* Light Blue background */
+            color: #1E3A8A !important; /* Dark Blue text */
+            border: 1px solid #BFDBFE;
+        }
+        div[data-testid="stMarkdownContainer"] p {
+             color: #2C3E50 !important;
+        }
+
+        /* --- D. DROPDOWN & INPUTS (The Black Box Issue) --- */
+        /* 1. The Input Box itself */
         div[data-baseweb="select"] > div, 
         div[data-baseweb="base-input"], 
         div[data-baseweb="input"] {
@@ -67,49 +79,70 @@ def apply_custom_styling():
             color: #000000 !important;
             border: 1px solid #D0D3D4 !important;
         }
+        
+        /* 2. The Popup Menu (The list that opens) */
+        div[data-baseweb="popover"], div[data-baseweb="menu"], ul[role="listbox"] {
+            background-color: #FFFFFF !important;
+        }
+        
+        /* 3. The Options inside the menu */
+        li[role="option"], li[data-baseweb="option"] {
+            color: #2C3E50 !important;
+            background-color: #FFFFFF !important;
+        }
+        /* 4. Hover effect on options */
+        li[role="option"]:hover, li[role="option"][aria-selected="true"] {
+            background-color: #FFE0B2 !important; /* Light Orange hover */
+            color: #000000 !important;
+        }
+
+        /* 5. Typing Text Color */
         input, textarea {
             color: #000000 !important;
             background-color: #FFFFFF !important;
             caret-color: #000000 !important;
         }
 
-        /* 5. FIX EXPANDERS (The Payment Summary Headers) */
-        .streamlit-expanderHeader {
+        /* --- E. DATAFRAMES & TABLES --- */
+        /* Force table background to white */
+        [data-testid="stDataFrame"], [data-testid="stTable"] {
             background-color: #FFFFFF !important;
-            color: #000000 !important;
-            border: 1px solid #D0D3D4;
-            border-radius: 8px;
-        }
-        
-        /* 6. FIX DATAFRAME HEADERS (Try to force light headers) */
-        [data-testid="stDataFrame"] {
-            background-color: #FFFFFF !important;
-            border: 1px solid #E0E0E0 !important;
-        }
-
-        /* 7. GENERAL TEXT COLORS */
-        h1, h2, h3, h4, h5, h6, p, label, span, div {
             color: #2C3E50 !important;
         }
-        
-        /* 8. BUTTONS */
+        /* Header Text Color */
+        th {
+            color: #2C3E50 !important;
+            background-color: #F8F9F9 !important;
+        }
+        /* Cell Text Color */
+        td {
+            color: #2C3E50 !important;
+        }
+
+        /* --- F. EXPANDERS (The Payment Summary Headers) --- */
+        .streamlit-expanderHeader {
+            background-color: #FFFFFF !important;
+            color: #2C3E50 !important;
+            border: 1px solid #D0D3D4;
+        }
+
+        /* --- G. BUTTONS --- */
         div.stButton > button[kind="primary"] {
             background-color: #F39C12 !important;
             color: white !important;
             border: none;
         }
         div.stButton > button[kind="secondary"] {
-            background-color: #ECF0F1 !important;
+            background-color: #FFFFFF !important;
             color: #2C3E50 !important;
             border: 1px solid #BDC3C7;
         }
-        /* +/- Buttons on number inputs */
         button[kind="secondaryForm"] {
             background-color: #F0F2F5 !important;
             color: #000000 !important;
         }
 
-        /* 9. HIDE DEFAULT MENU */
+        /* --- H. CLEANUP --- */
         #MainMenu {visibility: hidden;}
         footer {visibility: hidden;}
         </style>
@@ -152,8 +185,8 @@ if "logged_in" not in st.session_state:
 def login_process():
     col1, col2, col3 = st.columns([1,2,1])
     with col2:
-        st.markdown("<h1 style='text-align: center;'>🏗️ LabourPro</h1>", unsafe_allow_html=True)
-        st.markdown("<p style='text-align: center; color: grey !important;'>Secure Construction Management System</p>", unsafe_allow_html=True)
+        st.markdown("<h1 style='text-align: center; color: #2C3E50;'>🏗️ LabourPro</h1>", unsafe_allow_html=True)
+        st.markdown("<p style='text-align: center; color: #7F8C8D;'>Secure Construction Management System</p>", unsafe_allow_html=True)
         
         st.divider()
         
