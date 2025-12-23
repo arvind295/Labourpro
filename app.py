@@ -579,103 +579,104 @@ elif current_tab == "👥 Users":
         st.rerun()
 
 # ==========================
-# 8. BACKUP & RESTORE (NEW)
+# 8. BACKUP & RESTORE (IMPROVED)
 # ==========================
 elif current_tab == "💾 Backup & Restore":
     st.subheader("💾 Backup & Restore Database")
     st.markdown("""
     **Use this section to keep your data safe.**
-    1. **Backup:** Download a JSON file containing ALL entries, contractors, users, and sites.
-    2. **Restore:** If data is ever lost, upload that JSON file here to recover it.
     """)
     
     # --- SECTION A: BACKUP ---
     st.write("### 📤 Export Data (Backup)")
     if st.button("Generate Full Backup"):
-        # Fetch all tables
-        data_entries = fetch_data("entries").to_dict(orient="records")
-        data_contractors = fetch_data("contractors").to_dict(orient="records")
-        data_sites = fetch_data("sites").to_dict(orient="records")
-        data_users = fetch_data("users").to_dict(orient="records")
-        
-        # Create a single JSON object
-        full_backup = {
-            "entries": data_entries,
-            "contractors": data_contractors,
-            "sites": data_sites,
-            "users": data_users,
-            "backup_date": str(datetime.now())
-        }
-        
-        # Convert to JSON string
-        json_str = json.dumps(full_backup, indent=4, default=str)
-        
-        # Download Button
-        st.download_button(
-            label="📥 Download Backup File (.json)",
-            data=json_str,
-            file_name=f"labourpro_backup_{date.today()}.json",
-            mime="application/json",
-            type="primary"
-        )
+        with st.spinner("Generating JSON file..."):
+            # Fetch all tables
+            data_entries = fetch_data("entries").to_dict(orient="records")
+            data_contractors = fetch_data("contractors").to_dict(orient="records")
+            data_sites = fetch_data("sites").to_dict(orient="records")
+            data_users = fetch_data("users").to_dict(orient="records")
+            
+            full_backup = {
+                "entries": data_entries,
+                "contractors": data_contractors,
+                "sites": data_sites,
+                "users": data_users,
+                "backup_date": str(datetime.now())
+            }
+            json_str = json.dumps(full_backup, indent=4, default=str)
+            
+            st.download_button(
+                label="📥 Download Backup File (.json)",
+                data=json_str,
+                file_name=f"labourpro_backup_{date.today()}.json",
+                mime="application/json",
+                type="primary"
+            )
     
     st.divider()
     
     # --- SECTION B: RESTORE ---
     st.write("### 📥 Import Data (Restore)")
-    st.warning("⚠️ **Warning:** Importing data will ADD missing items. It will not delete existing data, but be careful of duplicates.")
     
     uploaded_file = st.file_uploader("Upload Backup JSON File", type=["json"])
     
+    # THIS IS THE NEW SAFTEY FEATURE
+    wipe_first = st.checkbox("⚠️ **Nuclear Option:** Delete all current data before restoring? (Guarantees exact copy, NO duplicates)", value=False)
+    
     if uploaded_file is not None:
-        try:
-            # Read JSON
-            backup_data = json.load(uploaded_file)
-            
-            if st.button("🔴 Start Restoration Process"):
-                progress_bar = st.progress(0)
-                status_text = st.empty()
+        if st.button("🔴 Start Restoration"):
+            try:
+                backup_data = json.load(uploaded_file)
+                bar = st.progress(0)
+                status = st.empty()
                 
-                # 1. Restore Sites
-                if "sites" in backup_data:
-                    status_text.text("Restoring Sites...")
-                    for item in backup_data["sites"]:
-                        try:
-                            supabase.table("sites").upsert(item).execute()
-                        except: pass
-                progress_bar.progress(25)
-                
-                # 2. Restore Contractors
-                if "contractors" in backup_data:
-                    status_text.text("Restoring Contractors...")
-                    for item in backup_data["contractors"]:
-                        try:
-                            # Remove ID if it conflicts, or use UPSERT
-                            supabase.table("contractors").upsert(item).execute()
-                        except: pass
-                progress_bar.progress(50)
-                
-                # 3. Restore Users
-                if "users" in backup_data:
-                    status_text.text("Restoring Users...")
-                    for item in backup_data["users"]:
-                        try:
-                            supabase.table("users").upsert(item).execute()
-                        except: pass
-                progress_bar.progress(75)
+                # 1. WIPE DATA logic (If selected)
+                if wipe_first:
+                    status.warning("🧹 Wiping existing data... (This prevents duplicates)")
+                    # We must delete 'entries' first because it depends on contractors/sites
+                    try:
+                        # 'neq' means 'not equal'. We delete everything where ID is not 0 (which is everything)
+                        supabase.table("entries").delete().neq("id", 0).execute()
+                        supabase.table("users").delete().neq("phone", "0").execute()
+                        supabase.table("contractors").delete().neq("id", 0).execute()
+                        supabase.table("sites").delete().neq("id", 0).execute()
+                        status.success("🧹 Data wiped clean. Starting import...")
+                    except Exception as e:
+                        st.error(f"Error during wipe: {e}")
+                        st.stop()
 
-                # 4. Restore Entries (The big one)
-                if "entries" in backup_data:
-                    status_text.text("Restoring Work Entries (this may take a moment)...")
-                    for item in backup_data["entries"]:
-                        try:
-                            # Clean up ID if needed, or let Supabase handle upsert
-                            supabase.table("entries").upsert(item).execute()
-                        except: pass
-                progress_bar.progress(100)
+                # 2. RESTORE logic (Order matters: Sites/Contractors first, then Entries)
                 
-                status_text.text("✅ Restoration Complete!")
-                st.success("Data successfully restored from backup!")
+                # Sites
+                if "sites" in backup_data and backup_data["sites"]:
+                    status.text("Restoring Sites...")
+                    supabase.table("sites").upsert(backup_data["sites"]).execute()
+                bar.progress(25)
+
+                # Contractors
+                if "contractors" in backup_data and backup_data["contractors"]:
+                    status.text("Restoring Contractors...")
+                    supabase.table("contractors").upsert(backup_data["contractors"]).execute()
+                bar.progress(50)
                 
-        except Exception as e:
-            st.error(f"Error parsing file: {e}")
+                # Users
+                if "users" in backup_data and backup_data["users"]:
+                    status.text("Restoring Users...")
+                    supabase.table("users").upsert(backup_data["users"]).execute()
+                bar.progress(70)
+
+                # Entries (The big one)
+                if "entries" in backup_data and backup_data["entries"]:
+                    status.text("Restoring Work Entries...")
+                    supabase.table("entries").upsert(backup_data["entries"]).execute()
+                bar.progress(100)
+                
+                status.success("✅ Restoration Complete!")
+                if wipe_first:
+                    st.info("Database is now an exact clone of the uploaded file.")
+                else:
+                    st.info("Backup merged with existing data.")
+                    
+            except Exception as e:
+                st.error(f"❌ Restoration Failed: {e}")
