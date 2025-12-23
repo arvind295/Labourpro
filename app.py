@@ -10,7 +10,7 @@ st.set_page_config(
     page_title="LabourPro", 
     page_icon="🏗️", 
     layout="wide", 
-    initial_sidebar_state="collapsed" # Collapsed sidebar looks better on mobile start
+    initial_sidebar_state="collapsed"
 )
 
 # --- 2. CONNECT TO SUPABASE ---
@@ -160,7 +160,6 @@ if "logged_in" not in st.session_state:
     st.session_state.update({"logged_in": False, "phone": None, "role": None})
 
 def login_process():
-    # Use layout designed for mobile (more width for the middle column)
     col1, col2, col3 = st.columns([1, 10, 1])
     
     with col2:
@@ -169,12 +168,10 @@ def login_process():
         st.markdown("<p style='text-align: center; color: grey;'>Site Entry Portal</p>", unsafe_allow_html=True)
         st.divider()
         
-        # --- USER LOGIN (Prominent & Default) ---
+        # --- USER LOGIN ---
         st.subheader("👷 Team Login")
         with st.form("u_log"):
             ph = st.text_input("Enter Mobile Number", max_chars=10, placeholder="98765xxxxx")
-            
-            # Full width button for easy thumb tapping
             if st.form_submit_button("🚀 Login", type="primary", use_container_width=True):
                 try:
                     d = supabase.table("users").select("*").eq("phone", ph).execute().data
@@ -193,13 +190,11 @@ def login_process():
 
         st.markdown("<br><br>", unsafe_allow_html=True)
 
-        # --- ADMIN LOGIN (Hidden in Expander) ---
+        # --- ADMIN LOGIN ---
         with st.expander("🔐 Admin Login (Click to Expand)"):
             with st.form("a_log"):
                 ph_admin = st.text_input("Admin Mobile")
                 pw_admin = st.text_input("Password", type="password")
-                
-                # Full width button
                 if st.form_submit_button("Admin Login", use_container_width=True):
                     rp = st.secrets["general"]["admin_password"] if "general" in st.secrets else "admin123"
                     if pw_admin == rp:
@@ -224,7 +219,7 @@ with st.sidebar:
 
 tabs = ["📝 Daily Entry"]
 if st.session_state["role"] == "admin":
-    tabs += ["🔍 Site Logs", "📊 Weekly Bill", "📍 Sites", "👷 Contractors", "👥 Users", "📂 Archive & New Year"]
+    tabs += ["🔍 Site Logs", "📊 Weekly Bill", "📍 Sites", "👷 Contractors", "👥 Users", "📂 Archive & Recovery"]
 
 current_tab = st.selectbox("Navigate", tabs, label_visibility="collapsed")
 st.divider()
@@ -279,7 +274,7 @@ if current_tab == "📝 Daily Entry":
         if rate_row:
             cost = (nm * rate_row['rate_mason']) + (nh * rate_row['rate_helper']) + (nl * rate_row['rate_ladies'])
             st.info(f"💰 Est Cost: ₹{cost:,.2f}")
-            if st.button("Save Entry", type="primary", use_container_width=True): # Full width for mobile too
+            if st.button("Save Entry", type="primary", use_container_width=True): 
                 load = {"date": str(dt), "site": st_sel, "contractor": con_sel, "count_mason": nm, "count_helper": nh, "count_ladies": nl, "total_cost": cost, "work_description": wdesc}
                 if mode == "new": supabase.table("entries").insert(load).execute()
                 else: supabase.table("entries").update(load).eq("id", exist["id"]).execute()
@@ -287,72 +282,48 @@ if current_tab == "📝 Daily Entry":
         else: st.error("No active rate found.")
 
 # ==========================
-# 2. SITE LOGS (UPDATED)
+# 2. SITE LOGS
 # ==========================
 elif current_tab == "🔍 Site Logs":
     st.subheader("🔍 Site Logs")
-    
-    # Fetch Data
     df_entries = pd.DataFrame(supabase.table("entries").select("*").order("date", desc=True).execute().data)
     df_users = fetch_data("users")
 
     if not df_entries.empty:
-        # Convert Date
         df_entries["date_obj"] = pd.to_datetime(df_entries["date"])
         df_entries["date_str"] = df_entries["date_obj"].dt.strftime('%d-%m-%Y')
         df_entries["month_year"] = df_entries["date_obj"].dt.strftime('%B %Y')
 
-        # --- FILTERS ---
         col_f1, col_f2 = st.columns(2)
-        
-        # Site Filter
         all_sites = ["All Sites"] + sorted(df_entries["site"].unique().tolist())
         sel_site = col_f1.selectbox("📍 Filter by Site", all_sites)
-        
-        # Month Filter
         all_months = ["All Months"] + sorted(df_entries["month_year"].unique().tolist(), reverse=True)
         sel_month = col_f2.selectbox("📅 Filter by Month", all_months)
 
-        # Apply Filters
         df_filtered = df_entries.copy()
-        if sel_site != "All Sites":
-            df_filtered = df_filtered[df_filtered["site"] == sel_site]
-        if sel_month != "All Months":
-            df_filtered = df_filtered[df_filtered["month_year"] == sel_month]
+        if sel_site != "All Sites": df_filtered = df_filtered[df_filtered["site"] == sel_site]
+        if sel_month != "All Months": df_filtered = df_filtered[df_filtered["month_year"] == sel_month]
 
-        # --- MATCH USERS (Entered By) ---
         def get_user_for_site(site_name):
             if df_users.empty: return "Unknown"
             matched = df_users[df_users["assigned_site"] == site_name]
-            if not matched.empty:
-                return ", ".join(matched["name"].tolist()) 
+            if not matched.empty: return ", ".join(matched["name"].tolist()) 
             return "Admin/Unassigned"
 
         df_filtered["entered_by"] = df_filtered["site"].apply(get_user_for_site)
-
-        # Display Table
-        st.markdown(f"**Showing {len(df_filtered)} entries**")
         
-        # Renaming for clean display
+        st.markdown(f"**Showing {len(df_filtered)} entries**")
         df_display = df_filtered[[
             "date_str", "site", "entered_by", "contractor", 
             "count_mason", "count_helper", "count_ladies", 
             "total_cost", "work_description"
         ]].rename(columns={
-            "date_str": "Date", 
-            "site": "Site",
-            "entered_by": "Entered By (User)",
-            "contractor": "Contractor",
-            "count_mason": "Mason",
-            "count_helper": "Helper",
-            "count_ladies": "Ladies",
-            "total_cost": "Cost (₹)",
-            "work_description": "Description"
+            "date_str": "Date", "site": "Site", "entered_by": "Entered By",
+            "contractor": "Contractor", "count_mason": "Mason", "count_helper": "Helper",
+            "count_ladies": "Ladies", "total_cost": "Cost (₹)", "work_description": "Description"
         })
-
         st.dataframe(df_display, use_container_width=True, hide_index=True)
-    else:
-        st.info("No logs found.")
+    else: st.info("No logs found.")
 
 elif current_tab == "📊 Weekly Bill":
     st.subheader("📊 Weekly Bill")
@@ -392,7 +363,6 @@ elif current_tab == "📍 Sites":
                 except Exception as e: st.error(f"Error: {e}")
         else: st.write("No sites to delete.")
 
-
 elif current_tab == "👷 Contractors":
     st.dataframe(fetch_data("contractors"), use_container_width=True)
     with st.form("ac"):
@@ -404,7 +374,6 @@ elif current_tab == "👷 Contractors":
 elif current_tab == "👥 Users":
     st.subheader("👥 User Management")
     df_users = fetch_data("users")
-    
     st.dataframe(df_users, use_container_width=True)
     st.divider()
 
@@ -413,7 +382,7 @@ elif current_tab == "👥 Users":
         st.markdown("### ✏️ Add or Edit User")
         st.info("To **change a site**, enter the user's phone, select the new site, and click Save.")
         with st.form("user_form"):
-            phone_input = st.text_input("Mobile Number (Unique ID)", max_chars=10)
+            phone_input = st.text_input("Mobile Number", max_chars=10)
             name_input = st.text_input("User Name")
             role_input = st.selectbox("Role", ["user", "admin"])
             site_data = fetch_data("sites")
@@ -429,74 +398,175 @@ elif current_tab == "👥 Users":
                         supabase.table("users").update({"name": name_input, "role": role_input, "assigned_site": assigned_val}).eq("phone", phone_input).execute()
                         st.success(f"Updated {name_input}")
                     else:
-                        supabase.table("users").insert({
-                            "phone": phone_input, 
-                            "name": name_input, 
-                            "role": role_input, 
-                            "assigned_site": assigned_val,
-                            "status": "Active"
-                        }).execute()
+                        supabase.table("users").insert({"phone": phone_input, "name": name_input, "role": role_input, "assigned_site": assigned_val, "status": "Active"}).execute()
                         st.success(f"Added {name_input}")
                     st.rerun()
 
     with c2:
         st.markdown("### 🚪 Resign User")
-        
         if not df_users.empty:
-            if 'status' in df_users.columns:
-                df_active = df_users[(df_users["role"] != "admin") & (df_users["status"] == "Active")]
-            else:
-                df_active = df_users[df_users["role"] != "admin"]
-            
+            df_active = df_users[(df_users["role"] != "admin") & (df_users.get("status", "Active") == "Active")] if 'status' in df_users.columns else df_users[df_users["role"] != "admin"]
             if not df_active.empty:
                 user_options = [f"{row['name']} ({row['phone']})" for index, row in df_active.iterrows()]
-                selected_user_str = st.selectbox("Select User to Resign", user_options)
-                
+                selected_user_str = st.selectbox("Select User", user_options)
                 if selected_user_str:
                     selected_phone = selected_user_str.split("(")[-1].replace(")", "")
                     if st.button("🚫 Confirm Resignation"):
                         supabase.table("users").update({"status": "Resigned"}).eq("phone", selected_phone).execute()
                         st.success("User marked as Resigned."); st.rerun()
-            else: st.info("No Active Users to resign.")
-        else: st.info("No User accounts found.")
+            else: st.info("No Active Users.")
+        else: st.info("No Users.")
 
 # ==========================
-# 4. ARCHIVE & NEW YEAR
+# 4. ARCHIVE, NEW YEAR & RECOVERY
 # ==========================
-elif current_tab == "📂 Archive & New Year":
-    st.subheader("📂 Data Management")
-    tab1, tab2 = st.tabs(["🚀 Start New Year (Reset)", "📜 View Old Archives"])
+elif current_tab == "📂 Archive & Recovery":
+    st.subheader("📂 Data Management & Recovery")
+    
+    tab1, tab2, tab3 = st.tabs(["🚀 Start New Year (Reset)", "📜 View Old Archives", "♻️ Restore Data (Recovery)"])
+    
+    # --- TAB 1: RESET (Backup & Delete) ---
     with tab1:
         st.markdown("### Step 1: Mandatory Backup")
         st.info("You must download a backup before you can clear data.")
         if "backup_unlocked" not in st.session_state: st.session_state["backup_unlocked"] = False
+        
         def unlock_delete(): st.session_state["backup_unlocked"] = True
-        backup_data = {"entries": fetch_data("entries").to_dict("records"), "contractors": fetch_data("contractors").to_dict("records"), "sites": fetch_data("sites").to_dict("records"), "users": fetch_data("users").to_dict("records"), "timestamp": str(datetime.now())}
-        st.download_button(label="1️⃣ Download Full Backup JSON", data=json.dumps(backup_data, indent=4, default=str), file_name=f"LabourPro_Backup_{date.today()}.json", mime="application/json", type="primary", on_click=unlock_delete)
+        
+        backup_data = {
+            "entries": fetch_data("entries").to_dict("records"),
+            "contractors": fetch_data("contractors").to_dict("records"),
+            "sites": fetch_data("sites").to_dict("records"),
+            "users": fetch_data("users").to_dict("records"),
+            "timestamp": str(datetime.now())
+        }
+        
+        st.download_button(
+            label="1️⃣ Download Full Backup JSON", 
+            data=json.dumps(backup_data, indent=4, default=str), 
+            file_name=f"LabourPro_Backup_{date.today()}.json", 
+            mime="application/json", 
+            type="primary", 
+            on_click=unlock_delete
+        )
+        
         st.divider()
         st.markdown("### Step 2: Clear Data")
-        st.write("This will delete **ALL Daily Entries**. Sites, Users, and Contractors will remain.")
+        st.warning("⚠️ This will delete **ALL Daily Entries**. Sites, Users, and Contractors will remain.")
         confirm_text = st.text_input("Type 'DELETE ALL' to confirm:")
+        
         if st.button("2️⃣ 🔥 Clear Entries & Start Fresh", type="primary", disabled=not st.session_state["backup_unlocked"]):
             if confirm_text == "DELETE ALL":
                 try:
                     supabase.table("entries").delete().neq("id", 0).execute()
-                    st.success("✅ System Reset Successful!"); st.balloons()
+                    st.success("✅ System Reset Successful! Ready for new year."); st.balloons()
                     st.session_state["backup_unlocked"] = False
                 except Exception as e: st.error(f"Error: {e}")
             else: st.error("❌ Type 'DELETE ALL' exactly.")
+            
+    # --- TAB 2: VIEWER (Read Only) ---
     with tab2:
-        st.markdown("### 📜 Archive Viewer")
-        uploaded_file = st.file_uploader("Upload Backup JSON", type=["json"])
+        st.markdown("### 📜 Archive Viewer (Read-Only)")
+        uploaded_file = st.file_uploader("Upload Backup JSON to View", type=["json"], key="view_upload")
         if uploaded_file is not None:
             try:
                 data = json.load(uploaded_file)
-                st.success("✅ File Loaded")
+                st.success("✅ File Loaded Successfully")
+                
                 ae = pd.DataFrame(data.get("entries", []))
                 ac = pd.DataFrame(data.get("contractors", []))
-                if not ae.empty:
-                    vm = st.radio("Select View:", ["Weekly Bill View", "Raw Logs View"], horizontal=True)
-                    if vm == "Weekly Bill View": render_weekly_bill(ae, ac)
-                    elif vm == "Raw Logs View": ae["date"] = pd.to_datetime(ae["date"]).dt.strftime('%d-%m-%Y'); st.dataframe(ae, use_container_width=True)
-                else: st.warning("⚠️ No entries found.")
+                au = pd.DataFrame(data.get("users", []))
+                asite = pd.DataFrame(data.get("sites", []))
+                
+                view_mode = st.selectbox(
+                    "Select Data to View:", 
+                    ["📊 Weekly Bill", "📝 Raw Entry Logs", "👥 Archived Users", "📍 Archived Sites", "👷 Archived Contractors"]
+                )
+                
+                st.divider()
+                
+                if view_mode == "📊 Weekly Bill":
+                    if not ae.empty and not ac.empty: render_weekly_bill(ae, ac)
+                    else: st.warning("Not enough data for bills.")
+                elif view_mode == "📝 Raw Entry Logs":
+                    if not ae.empty:
+                        ae["date"] = pd.to_datetime(ae["date"]).dt.strftime('%d-%m-%Y')
+                        st.dataframe(ae, use_container_width=True)
+                    else: st.warning("No entries.")
+                elif view_mode == "👥 Archived Users":
+                    st.dataframe(au, use_container_width=True) if not au.empty else st.warning("No users.")
+                elif view_mode == "📍 Archived Sites":
+                    st.dataframe(asite, use_container_width=True) if not asite.empty else st.warning("No sites.")
+                elif view_mode == "👷 Archived Contractors":
+                    st.dataframe(ac, use_container_width=True) if not ac.empty else st.warning("No contractors.")
+                    
             except Exception as e: st.error(f"❌ Invalid JSON file: {e}")
+
+    # --- TAB 3: RESTORE (Disaster Recovery) ---
+    with tab3:
+        st.markdown("### ♻️ Disaster Recovery")
+        st.error("⚠️ **DANGER ZONE:** Use this ONLY if your online database is empty, crashed, or you want to restore old data. This will upload the data from the file back into the live system.")
+        
+        restore_file = st.file_uploader("Upload Backup JSON to Restore", type=["json"], key="restore_upload")
+        
+        if restore_file is not None:
+            data = json.load(restore_file)
+            
+            cnt_users = len(data.get("users", []))
+            cnt_sites = len(data.get("sites", []))
+            cnt_cons = len(data.get("contractors", []))
+            cnt_entries = len(data.get("entries", []))
+            
+            st.markdown(f"""
+                **File Summary:**
+                * 👤 Users: {cnt_users}
+                * 📍 Sites: {cnt_sites}
+                * 👷 Contractors: {cnt_cons}
+                * 📝 Entries: {cnt_entries}
+            """)
+            
+            if st.button("🚀 Upload & Restore Data Now", type="primary"):
+                progress_bar = st.progress(0)
+                status_text = st.empty()
+                
+                try:
+                    def clean_for_insert(record_list):
+                        cleaned = []
+                        for item in record_list:
+                            if 'id' in item: del item['id']
+                            cleaned.append(item)
+                        return cleaned
+
+                    if cnt_sites > 0:
+                        status_text.write("Restoring Sites...")
+                        clean_sites = clean_for_insert(data["sites"])
+                        supabase.table("sites").upsert(clean_sites, on_conflict="name").execute()
+                    progress_bar.progress(25)
+                    
+                    if cnt_users > 0:
+                        status_text.write("Restoring Users...")
+                        clean_users = clean_for_insert(data["users"])
+                        supabase.table("users").upsert(clean_users, on_conflict="phone").execute()
+                    progress_bar.progress(50)
+
+                    if cnt_cons > 0:
+                        status_text.write("Restoring Contractors...")
+                        clean_cons = clean_for_insert(data["contractors"])
+                        supabase.table("contractors").insert(clean_cons).execute()
+                    progress_bar.progress(75)
+
+                    if cnt_entries > 0:
+                        status_text.write("Restoring Entries (This may take a moment)...")
+                        clean_entries = clean_for_insert(data["entries"])
+                        batch_size = 100
+                        for i in range(0, len(clean_entries), batch_size):
+                            batch = clean_entries[i:i + batch_size]
+                            supabase.table("entries").insert(batch).execute()
+                            
+                    progress_bar.progress(100)
+                    status_text.success("✅ Restoration Complete! Your data is back online.")
+                    st.balloons()
+                    
+                except Exception as e:
+                    st.error(f"❌ Error during restore: {e}")
+                    st.warning("Tip: If you have duplicate data errors, try clearing the database first using the 'Reset' tab.")
