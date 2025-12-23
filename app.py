@@ -67,7 +67,7 @@ def get_billing_start_date(entry_date):
     days_since_saturday = (entry_date.weekday() + 2) % 7
     return entry_date - timedelta(days=days_since_saturday)
 
-# Reusable Function to Generate the HTML Bill (For Live & Archive)
+# Reusable Function to Generate the HTML Bill
 def render_weekly_bill(df_entries, df_contractors):
     if df_entries.empty:
         st.info("No data available for this period.")
@@ -114,20 +114,16 @@ def render_weekly_bill(df_entries, df_contractors):
                 tm += row["count_mason"]; th += row["count_helper"]; tl += row["count_ladies"]
                 tamt += row["total_cost"]
 
-            # Rate Lookup (For display only - total cost uses DB stored value)
+            # Rate Lookup logic for display
             rates = df_contractors[df_contractors["name"] == con_name].sort_values("effective_date", ascending=False)
             rm, rh, rl = (0,0,0)
             if not rates.empty:
-                # We try to find the rate that was active for the start of this billing week
-                # If not found, fallback to latest rate
                 start_of_week = df_week.iloc[0]["start_date"]
                 valid_rates = rates[rates["effective_date"] <= start_of_week]
-                
                 if not valid_rates.empty:
                     curr = valid_rates.iloc[0]
                     rm, rh, rl = curr["rate_mason"], curr["rate_helper"], curr["rate_ladies"]
                 else:
-                    # Fallback to absolute latest if history missing
                     curr = rates.iloc[0]
                     rm, rh, rl = curr["rate_mason"], curr["rate_helper"], curr["rate_ladies"]
             
@@ -255,7 +251,7 @@ if current_tab == "📝 Daily Entry":
         if st.session_state["role"] != "admin":
             u = supabase.table("users").select("assigned_site").eq("phone", st.session_state["phone"]).single().execute()
             if u.data and u.data.get("assigned_site") in av_sites: av_sites = [u.data.get("assigned_site")]
-            elif "All" in av_sites: pass # Fallback if needed
+            elif "All" in av_sites: pass
             else: st.error("No site assigned or site deleted."); st.stop()
 
         st.subheader("📝 New Work Entry")
@@ -263,7 +259,6 @@ if current_tab == "📝 Daily Entry":
         dt = c1.date_input("Date", date.today())
         st_sel = c2.selectbox("Site", av_sites)
         
-        # Check if contractors exist
         con_options = df_con["name"].unique() if not df_con.empty else []
         if len(con_options) == 0:
             st.error("Please add contractors in Admin panel first.")
@@ -290,7 +285,7 @@ if current_tab == "📝 Daily Entry":
         nl = k3.number_input("Ladies", value=vl, step=0.5)
         wdesc = st.text_area("Description", value=vd)
 
-        # Rate Fetching
+        # Rate Fetching (CRITICAL: Finds rate active on Entry Date)
         rate_row = None
         try:
             rr = supabase.table("contractors").select("*").eq("name", con_sel).lte("effective_date", str(dt)).order("effective_date", desc=True).limit(1).execute()
@@ -317,7 +312,7 @@ elif current_tab == "🔍 Site Logs":
 
     if not df_entries.empty:
         df_entries["date_obj"] = pd.to_datetime(df_entries["date"], errors='coerce')
-        df_entries = df_entries.dropna(subset=["date_obj"]) # Safety drop
+        df_entries = df_entries.dropna(subset=["date_obj"])
         
         df_entries["date_str"] = df_entries["date_obj"].dt.strftime('%d-%m-%Y')
         df_entries["month_year"] = df_entries["date_obj"].dt.strftime('%B %Y')
@@ -396,16 +391,77 @@ elif current_tab == "📍 Sites":
                 except Exception as e: st.error(f"Error: {e}")
         else: st.write("No sites to delete.")
 
+# ==========================
+# UPDATED CONTRACTOR TAB (New Price Hike Logic)
+# ==========================
 elif current_tab == "👷 Contractors":
-    st.dataframe(fetch_data("contractors"), use_container_width=True)
-    with st.form("ac"):
-        n = st.text_input("Name")
+    st.subheader("👷 Contractor Rate Management")
+    
+    # 1. Show Current Database (All History)
+    df_con = fetch_data("contractors")
+    
+    # Show a cleaner table with latest rates first
+    if not df_con.empty:
+        st.dataframe(
+            df_con.sort_values(by=["name", "effective_date"], ascending=[True, False]), 
+            use_container_width=True, 
+            hide_index=True,
+            column_config={
+                "effective_date": st.column_config.DateColumn("Effective From", format="DD-MM-YYYY")
+            }
+        )
+    else:
+        st.info("No contractors added yet.")
+
+    st.divider()
+
+    # 2. Add New Rates / Update Existing
+    st.markdown("### 📈 Update Rates / Add Contractor")
+    
+    # Toggle between New and Existing
+    mode = st.radio("Action Type:", ["🆕 Add New Contractor", "✏️ Update Rates for Existing"], horizontal=True)
+    
+    with st.form("contractor_form"):
+        # LOGIC: If updating, show dropdown. If new, show text input.
+        if mode == "✏️ Update Rates for Existing":
+            if df_con.empty:
+                st.warning("No contractors found to update. Please add a new one first.")
+                con_name = ""
+            else:
+                con_name = st.selectbox("Select Contractor", df_con["name"].unique())
+        else:
+            con_name = st.text_input("Enter New Contractor Name")
+
         c1, c2, c3 = st.columns(3)
-        r1 = c1.number_input("Mason Rate", value=800); r2 = c2.number_input("Helper Rate", value=500); r3 = c3.number_input("Ladies Rate", value=400)
-        if st.form_submit_button("Save"): 
-            if n.strip():
-                supabase.table("contractors").insert({"name": n, "rate_mason": r1, "rate_helper": r2, "rate_ladies": r3, "effective_date": str(date.today())}).execute(); st.rerun()
-            else: st.error("Contractor Name required")
+        r_mason = c1.number_input("Mason Rate (₹)", value=0, step=10)
+        r_helper = c2.number_input("Helper Rate (₹)", value=0, step=10)
+        r_ladies = c3.number_input("Ladies Rate (₹)", value=0, step=10)
+        
+        # KEY FEATURE: Effective Date
+        eff_date = st.date_input("📅 New Prices Effective From", value=date.today())
+        
+        submitted = st.form_submit_button("💾 Save Rate Card", type="primary", use_container_width=True)
+        
+        if submitted:
+            if not con_name or str(con_name).strip() == "":
+                st.error("❌ Name is required.")
+            elif r_mason == 0 and r_helper == 0 and r_ladies == 0:
+                st.error("❌ Please enter at least one rate.")
+            else:
+                try:
+                    # Insert new row (History Preservation)
+                    supabase.table("contractors").insert({
+                        "name": con_name, 
+                        "rate_mason": r_mason, 
+                        "rate_helper": r_helper, 
+                        "rate_ladies": r_ladies, 
+                        "effective_date": str(eff_date)
+                    }).execute()
+                    
+                    st.success(f"✅ Rates updated for {con_name} effective from {eff_date}")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Error: {e}")
 
 elif current_tab == "👥 Users":
     st.subheader("👥 User Management")
@@ -588,13 +644,12 @@ elif current_tab == "📂 Archive & Recovery":
                     if cnt_cons > 0:
                         status_text.write("Restoring Contractors...")
                         clean_cons = clean_for_insert(data["contractors"])
-                        # Changed from insert to upsert to prevent crashing on duplicates
-                        # Assumes 'name' and 'effective_date' are keys, but usually just 'id' or 'name' 
-                        # Using insert for safety on data integrity, wrapped in try-except for duplicates
                         try:
+                            # Using upsert here might be tricky if IDs are involved,
+                            # but safer than straight insert if duplicates exist.
+                            # Best effort for recovery:
                             supabase.table("contractors").upsert(clean_cons).execute()
                         except:
-                            # Fallback if upsert fails (unlikely)
                             pass
                     progress_bar.progress(75)
 
