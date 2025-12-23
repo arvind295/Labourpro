@@ -5,7 +5,11 @@ from supabase import create_client
 
 # --- 1. CONFIGURATION ---
 st.set_page_config(page_title="LabourPro", page_icon="🏗️", layout="wide")
-ADMIN_PASSWORD = "admin123"
+# Try to get password from secrets, otherwise default to admin123 (safety net)
+try:
+    ADMIN_PASSWORD = st.secrets["general"]["admin_password"]
+except:
+    ADMIN_PASSWORD = "admin123"
 
 # --- 2. CONNECT TO SUPABASE ---
 try:
