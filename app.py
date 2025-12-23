@@ -25,7 +25,7 @@ except Exception:
     st.error("⚠️ Supabase connection failed. Check secrets.toml.")
     st.stop()
 
-# --- 3. CUSTOM STYLING (The Black Text Fix) ---
+# --- 3. CUSTOM STYLING ---
 def apply_custom_styling():
     st.markdown("""
         <style>
@@ -108,45 +108,45 @@ def render_weekly_bill(df_entries, df_contractors):
             if not rates.empty:
                 rm, rh, rl = rates.iloc[0]["rate_mason"], rates.iloc[0]["rate_helper"], rates.iloc[0]["rate_ladies"]
             
-            # Build HTML
+            # --- FIX: Removed indentation from HTML strings to prevent code-block rendering ---
             html = f"""
-            <table style="width:100%; border-collapse: collapse; color: black; background: white; font-size: 14px;">
-                <tr style="background: #e0e0e0; border-bottom: 2px solid black;">
-                    <th style="padding: 8px; border: 1px solid #ccc;">Date</th>
-                    <th style="padding: 8px; border: 1px solid #ccc;">Mason</th>
-                    <th style="padding: 8px; border: 1px solid #ccc;">Helper</th>
-                    <th style="padding: 8px; border: 1px solid #ccc;">Ladies</th>
-                </tr>
-            """
+<table style="width:100%; border-collapse: collapse; color: black; background: white; font-size: 14px;">
+<tr style="background: #e0e0e0; border-bottom: 2px solid black;">
+<th style="padding: 8px; border: 1px solid #ccc;">Date</th>
+<th style="padding: 8px; border: 1px solid #ccc;">Mason</th>
+<th style="padding: 8px; border: 1px solid #ccc;">Helper</th>
+<th style="padding: 8px; border: 1px solid #ccc;">Ladies</th>
+</tr>
+"""
             for r in rows:
                 html += f"""
-                <tr>
-                    <td style="padding: 8px; border: 1px solid #ccc;">{r['Date']}</td>
-                    <td style="padding: 8px; border: 1px solid #ccc;">{r['Mason']}</td>
-                    <td style="padding: 8px; border: 1px solid #ccc;">{r['Helper']}</td>
-                    <td style="padding: 8px; border: 1px solid #ccc;">{r['Ladies']}</td>
-                </tr>
-                """
+<tr>
+<td style="padding: 8px; border: 1px solid #ccc;">{r['Date']}</td>
+<td style="padding: 8px; border: 1px solid #ccc;">{r['Mason']}</td>
+<td style="padding: 8px; border: 1px solid #ccc;">{r['Helper']}</td>
+<td style="padding: 8px; border: 1px solid #ccc;">{r['Ladies']}</td>
+</tr>
+"""
             html += f"""
-                <tr style="font-weight: bold; background: #f9f9f9;">
-                    <td style="padding: 8px; border: 1px solid #ccc;">Total Labour</td>
-                    <td style="padding: 8px; border: 1px solid #ccc;">{tm}</td>
-                    <td style="padding: 8px; border: 1px solid #ccc;">{th}</td>
-                    <td style="padding: 8px; border: 1px solid #ccc;">{tl}</td>
-                </tr>
-                <tr style="font-weight: bold;">
-                    <td style="padding: 8px; border: 1px solid #ccc;">Amount (₹)</td>
-                    <td style="padding: 8px; border: 1px solid #ccc;">₹{tm*rm:,.0f}</td>
-                    <td style="padding: 8px; border: 1px solid #ccc;">₹{th*rh:,.0f}</td>
-                    <td style="padding: 8px; border: 1px solid #ccc;">₹{tl*rl:,.0f}</td>
-                </tr>
-                <tr style="font-weight: bold; background: #e0e0e0; font-size: 1.1em;">
-                    <td style="padding: 8px; border: 1px solid #ccc;">Total Amount</td>
-                    <td colspan="3" style="padding: 8px; border: 1px solid #ccc; text-align: center;">₹{tamt:,.0f}</td>
-                </tr>
-            </table>
-            <br>
-            """
+<tr style="font-weight: bold; background: #f9f9f9;">
+<td style="padding: 8px; border: 1px solid #ccc;">Total Labour</td>
+<td style="padding: 8px; border: 1px solid #ccc;">{tm}</td>
+<td style="padding: 8px; border: 1px solid #ccc;">{th}</td>
+<td style="padding: 8px; border: 1px solid #ccc;">{tl}</td>
+</tr>
+<tr style="font-weight: bold;">
+<td style="padding: 8px; border: 1px solid #ccc;">Amount (₹)</td>
+<td style="padding: 8px; border: 1px solid #ccc;">₹{tm*rm:,.0f}</td>
+<td style="padding: 8px; border: 1px solid #ccc;">₹{th*rh:,.0f}</td>
+<td style="padding: 8px; border: 1px solid #ccc;">₹{tl*rl:,.0f}</td>
+</tr>
+<tr style="font-weight: bold; background: #e0e0e0; font-size: 1.1em;">
+<td style="padding: 8px; border: 1px solid #ccc;">Total Amount</td>
+<td colspan="3" style="padding: 8px; border: 1px solid #ccc; text-align: center;">₹{tamt:,.0f}</td>
+</tr>
+</table>
+<br>
+"""
             st.markdown(html, unsafe_allow_html=True)
         st.divider()
 
@@ -296,20 +296,86 @@ elif current_tab == "👷 Contractors":
         if st.form_submit_button("Save"): supabase.table("contractors").insert({"name": n, "rate_mason": r1, "rate_helper": r2, "rate_ladies": r3, "effective_date": str(date.today())}).execute(); st.rerun()
 
 elif current_tab == "👥 Users":
-    st.dataframe(fetch_data("users"), use_container_width=True)
-    with st.form("au"):
-        p = st.text_input("Phone"); nm = st.text_input("Name"); r = st.selectbox("Role", ["user", "admin"])
-        s = st.selectbox("Site", ["None/All"] + fetch_data("sites")["name"].tolist() if not fetch_data("sites").empty else [])
-        if st.form_submit_button("Save"):
-            sv = None if s == "None/All" else s
-            if supabase.table("users").select("*").eq("phone", p).execute().data:
-                supabase.table("users").update({"name": nm, "role": r, "assigned_site": sv}).eq("phone", p).execute()
-            else:
-                supabase.table("users").insert({"phone": p, "name": nm, "role": r, "assigned_site": sv}).execute()
-            st.rerun()
+    st.subheader("👥 User Management")
+
+    # 1. VIEW USERS
+    df_users = fetch_data("users")
+    st.dataframe(df_users, use_container_width=True)
+    st.divider()
+
+    c1, c2 = st.columns(2)
+
+    # 2. ADD / UPDATE USER
+    with c1:
+        st.markdown("### ✏️ Add or Edit User")
+        st.info("To **change a site**, enter the user's phone, select the new site, and click Save.")
+        with st.form("user_form"):
+            phone_input = st.text_input("Mobile Number (Unique ID)", max_chars=10)
+            name_input = st.text_input("User Name")
+            role_input = st.selectbox("Role", ["user", "admin"])
+            
+            # Fetch sites for dropdown
+            site_data = fetch_data("sites")
+            site_list = ["None/All"] + site_data["name"].tolist() if not site_data.empty else ["None/All"]
+            
+            site_input = st.selectbox("Assign Site", site_list)
+            
+            submitted = st.form_submit_button("💾 Save / Update", type="primary")
+            
+            if submitted:
+                if not phone_input:
+                    st.error("Phone number is required.")
+                else:
+                    assigned_val = None if site_input == "None/All" else site_input
+                    
+                    # Check if exists
+                    existing = supabase.table("users").select("*").eq("phone", phone_input).execute().data
+                    
+                    if existing:
+                        # Update
+                        supabase.table("users").update({
+                            "name": name_input, 
+                            "role": role_input, 
+                            "assigned_site": assigned_val
+                        }).eq("phone", phone_input).execute()
+                        st.success(f"✅ User '{name_input}' updated successfully!")
+                    else:
+                        # Insert
+                        supabase.table("users").insert({
+                            "phone": phone_input, 
+                            "name": name_input, 
+                            "role": role_input, 
+                            "assigned_site": assigned_val
+                        }).execute()
+                        st.success(f"✅ New user '{name_input}' added!")
+                    st.rerun()
+
+    # 3. DELETE USER
+    with c2:
+        st.markdown("### ❌ Delete User")
+        st.warning("This action cannot be undone.")
+        
+        if not df_users.empty:
+            # Create a list of strings like "Name (Phone)" for the dropdown
+            user_options = [f"{row['name']} ({row['phone']})" for index, row in df_users.iterrows()]
+            selected_user_str = st.selectbox("Select User to Remove", user_options)
+            
+            # Extract phone number from the string
+            if selected_user_str:
+                selected_phone = selected_user_str.split("(")[-1].replace(")", "")
+                
+                if st.button("🗑️ Permanently Delete User"):
+                    try:
+                        supabase.table("users").delete().eq("phone", selected_phone).execute()
+                        st.success("User deleted.")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Error: {e}")
+        else:
+            st.info("No users to delete.")
 
 # ==========================
-# 4. ARCHIVE & NEW YEAR (The Logic You Requested)
+# 4. ARCHIVE & NEW YEAR
 # ==========================
 elif current_tab == "📂 Archive & New Year":
     st.subheader("📂 Data Management")
