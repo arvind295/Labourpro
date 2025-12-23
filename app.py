@@ -150,7 +150,7 @@ def render_weekly_bill(df_entries, df_contractors):
             st.markdown(html, unsafe_allow_html=True)
         st.divider()
 
-# --- 5. LOGIN ---
+# --- 5. LOGIN (UPDATED for Status Check) ---
 if "logged_in" not in st.session_state:
     st.session_state.update({"logged_in": False, "phone": None, "role": None})
 
@@ -166,11 +166,19 @@ def login_process():
                 if st.form_submit_button("Login", type="primary"):
                     try:
                         d = supabase.table("users").select("*").eq("phone", ph).execute().data
-                        if d and d[0].get("role") != "admin":
-                            st.session_state.update({"logged_in": True, "phone": d[0]["phone"], "role": "user"})
-                            st.rerun()
-                        else: st.error("Access Denied")
-                    except: st.error("Error")
+                        if d:
+                            user = d[0]
+                            # CHECK IF RESIGNED
+                            if user.get("status") == "Resigned":
+                                st.error("⚠️ This account has been deactivated (Resigned).")
+                            elif user.get("role") != "admin":
+                                st.session_state.update({"logged_in": True, "phone": user["phone"], "role": "user"})
+                                st.rerun()
+                            else:
+                                st.error("Access Denied")
+                        else:
+                            st.error("User not found")
+                    except Exception as e: st.error(f"Error: {e}")
         else:
             with st.form("a_log"):
                 ph = st.text_input("Admin Mobile")
@@ -296,16 +304,11 @@ elif current_tab == "🔍 Site Logs":
             df_filtered = df_filtered[df_filtered["month_year"] == sel_month]
 
         # --- MATCH USERS (Entered By) ---
-        # Logic: Find which user is assigned to this site
-        # Note: If multiple users are assigned to one site (or if assignments changed), this shows the CURRENT assigned user.
-        # Since Supabase doesn't track 'created_by' in entries table by default, we map 'site' -> 'user.assigned_site'
-        
         def get_user_for_site(site_name):
             if df_users.empty: return "Unknown"
-            # Find users where assigned_site matches
             matched = df_users[df_users["assigned_site"] == site_name]
             if not matched.empty:
-                return ", ".join(matched["name"].tolist()) # Returns "John" or "John, Doe"
+                return ", ".join(matched["name"].tolist()) 
             return "Admin/Unassigned"
 
         df_filtered["entered_by"] = df_filtered["site"].apply(get_user_for_site)
@@ -384,6 +387,8 @@ elif current_tab == "👷 Contractors":
 elif current_tab == "👥 Users":
     st.subheader("👥 User Management")
     df_users = fetch_data("users")
+    
+    # Show user list (Ensure 'status' column is visible if it exists)
     st.dataframe(df_users, use_container_width=True)
     st.divider()
 
@@ -398,33 +403,52 @@ elif current_tab == "👥 Users":
             site_data = fetch_data("sites")
             site_list = ["None/All"] + site_data["name"].tolist() if not site_data.empty else ["None/All"]
             site_input = st.selectbox("Assign Site", site_list)
+            
             if st.form_submit_button("💾 Save / Update", type="primary"):
                 if not phone_input: st.error("Phone required.")
                 else:
                     assigned_val = None if site_input == "None/All" else site_input
                     existing = supabase.table("users").select("*").eq("phone", phone_input).execute().data
                     if existing:
+                        # Update existing (keep existing status or assume active)
                         supabase.table("users").update({"name": name_input, "role": role_input, "assigned_site": assigned_val}).eq("phone", phone_input).execute()
                         st.success(f"Updated {name_input}")
                     else:
-                        supabase.table("users").insert({"phone": phone_input, "name": name_input, "role": role_input, "assigned_site": assigned_val}).execute()
+                        # Create NEW user - Default Status = Active
+                        supabase.table("users").insert({
+                            "phone": phone_input, 
+                            "name": name_input, 
+                            "role": role_input, 
+                            "assigned_site": assigned_val,
+                            "status": "Active"  # <--- NEW FIELD
+                        }).execute()
                         st.success(f"Added {name_input}")
                     st.rerun()
 
     with c2:
-        st.markdown("### ❌ Delete User")
-        st.warning("Admins cannot be deleted here.")
+        st.markdown("### 🚪 Resign User (Soft Delete)")
+        st.info("This will deactivate the user but keep their data history.")
+        
         if not df_users.empty:
-            df_deletable = df_users[df_users["role"] != "admin"]
-            if not df_deletable.empty:
-                user_options = [f"{row['name']} ({row['phone']})" for index, row in df_deletable.iterrows()]
-                selected_user_str = st.selectbox("Select User to Remove", user_options)
+            # Only show ACTIVE users in the dropdown to avoid double-resigning
+            # Check if 'status' column exists in dataframe, otherwise assume all active
+            if 'status' in df_users.columns:
+                df_active = df_users[(df_users["role"] != "admin") & (df_users["status"] == "Active")]
+            else:
+                df_active = df_users[df_users["role"] != "admin"]
+            
+            if not df_active.empty:
+                user_options = [f"{row['name']} ({row['phone']})" for index, row in df_active.iterrows()]
+                selected_user_str = st.selectbox("Select User to Resign", user_options)
+                
                 if selected_user_str:
                     selected_phone = selected_user_str.split("(")[-1].replace(")", "")
-                    if st.button("🗑️ Permanently Delete User"):
-                        supabase.table("users").delete().eq("phone", selected_phone).execute()
-                        st.success("User deleted."); st.rerun()
-            else: st.info("No User accounts found.")
+                    if st.button("🚫 Confirm Resignation"):
+                        # UPDATE STATUS INSTEAD OF DELETE
+                        supabase.table("users").update({"status": "Resigned"}).eq("phone", selected_phone).execute()
+                        st.success("User marked as Resigned."); st.rerun()
+            else: st.info("No Active Users to resign.")
+        else: st.info("No User accounts found.")
 
 # ==========================
 # 4. ARCHIVE & NEW YEAR
