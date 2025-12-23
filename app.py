@@ -1,12 +1,14 @@
 import streamlit as st
 import pandas as pd
+import json
 from datetime import datetime, date, timedelta
 from supabase import create_client
-import io  # <--- Add this new import
+import io  # Required for CSV downloads
 
 # --- 1. CONFIGURATION ---
 st.set_page_config(page_title="LabourPro", page_icon="🏗️", layout="wide")
-# Try to get password from secrets, otherwise default to admin123 (safety net)
+
+# Try to get password from secrets, otherwise default to admin123 (Only for testing!)
 try:
     ADMIN_PASSWORD = st.secrets["general"]["admin_password"]
 except:
@@ -26,7 +28,8 @@ except Exception:
 
 # --- 3. HELPER FUNCTIONS ---
 def fetch_data(table):
-    return pd.DataFrame(supabase.table(table).select("*").execute().data)
+    response = supabase.table(table).select("*").execute()
+    return pd.DataFrame(response.data)
 
 def get_billing_start_date(entry_date):
     """Calculates the Saturday that started the billing week."""
@@ -41,9 +44,11 @@ def calculate_split_costs(df_e, df_c):
     if df_e.empty or df_c.empty:
         return df_e
     
+    # SAFETY FIX: Create a copy to avoid 'SettingWithCopy' warnings
+    df_c = df_c.copy()
+    
     # Ensure dates are comparable
     df_c["effective_date"] = pd.to_datetime(df_c["effective_date"]).dt.date
-    # df_e["date"] is already converted in the main loop usually
     
     m_costs, h_costs, l_costs = [], [], []
     
@@ -111,7 +116,6 @@ def login_process():
         st.subheader("Admin Access")
         with st.form("admin_login"):
             phone = st.text_input("Admin Mobile Number", max_chars=10).strip()
-            # The password box with 'enter' key support
             password = st.text_input("Admin Password", type="password")
             submitted = st.form_submit_button("Login as Admin")
             
@@ -155,7 +159,15 @@ st.title("🏗️ Labour Management Pro")
 # --- NAVIGATION ---
 tabs = ["📝 Daily Entry"]
 if my_role == "admin":
-    tabs += ["🔍 Site Logs (Day-to-Day)", "📊 Weekly Bill (Details)", "💰 Payment Summary", "📍 Sites", "👷 Contractors", "👥 Users"]
+    tabs += [
+        "🔍 Site Logs (Day-to-Day)", 
+        "📊 Weekly Bill (Details)", 
+        "💰 Payment Summary", 
+        "📍 Sites", 
+        "👷 Contractors", 
+        "👥 Users",
+        "💾 Backup & Restore"  # <--- NEW TAB ADDED
+    ]
 
 current_tab = st.radio("Navigate", tabs, horizontal=True, label_visibility="collapsed")
 st.divider()
@@ -188,7 +200,7 @@ if current_tab == "📝 Daily Entry":
                 st.stop()
 
         c1, c2, c3 = st.columns(3)
-        entry_date = c1.date_input("Date of Work", date.today())
+        entry_date = c1.date_input("Date of Work", date.today(), format="DD/MM/YYYY")
         site = c2.selectbox("Site", available_sites) 
         contractor = c3.selectbox("Contractor", df_con["name"].unique())
         
@@ -203,7 +215,7 @@ if current_tab == "📝 Daily Entry":
         mode = "new"
         current_edits = 0
         val_m, val_h, val_l = 0.0, 0.0, 0.0
-        val_desc = ""  # Default empty description
+        val_desc = ""
 
         if existing_entry:
             mode = "edit"
@@ -211,7 +223,7 @@ if current_tab == "📝 Daily Entry":
             val_m = float(existing_entry.get("count_mason", 0))
             val_h = float(existing_entry.get("count_helper", 0))
             val_l = float(existing_entry.get("count_ladies", 0))
-            val_desc = existing_entry.get("work_description", "")  # Load existing description
+            val_desc = existing_entry.get("work_description", "")
             
             if current_edits >= 2:
                 st.error(f"⛔ Locked: Edited 2 times already.")
@@ -225,8 +237,7 @@ if current_tab == "📝 Daily Entry":
         n_helper = k2.number_input("👷 Helpers", min_value=0.0, step=0.5, value=val_h, format="%.1f")
         n_ladies = k3.number_input("👩 Ladies", min_value=0.0, step=0.5, value=val_l, format="%.1f")
         
-        # --- NEW: WORK DESCRIPTION ---
-        work_desc = st.text_area("📝 Work Description / Activity", value=val_desc, placeholder="e.g. Plastering 2nd floor wall, Foundation digging...")
+        work_desc = st.text_area("📝 Work Description / Activity", value=val_desc, placeholder="e.g. Plastering 2nd floor wall...")
 
         rate_row = None
         try:
@@ -245,14 +256,12 @@ if current_tab == "📝 Daily Entry":
             btn_text = "✅ Save Entry" if mode == "new" else f"🔄 Update"
             
             if st.button(btn_text, type="primary"):
-                # We allow 0 cost if they just want to add a description, 
-                # OR we require at least one person. Usually cost > 0 is better check.
                 if total_est > 0 or work_desc.strip() != "":
                     data_payload = {
                         "date": str(entry_date), "site": site, "contractor": contractor,
                         "count_mason": n_mason, "count_helper": n_helper, "count_ladies": n_ladies,
                         "total_cost": total_est,
-                        "work_description": work_desc  # Saving the description
+                        "work_description": work_desc
                     }
 
                     if mode == "new":
@@ -273,7 +282,7 @@ if current_tab == "📝 Daily Entry":
             st.error("⚠️ No active rates found.")
 
 # ==========================
-# 2. SITE LOGS (Updated: Search, Dashboard, Download)
+# 2. SITE LOGS
 # ==========================
 elif current_tab == "🔍 Site Logs (Day-to-Day)":
     st.subheader("🔍 Site Logs & Analytics")
@@ -293,24 +302,24 @@ elif current_tab == "🔍 Site Logs (Day-to-Day)":
         
         if not df_log.empty:
             df_log["date"] = pd.to_datetime(df_log["date"])
+            
+            # --- DATE FIX: Format for display ---
+            df_log["Date"] = df_log["date"].dt.strftime('%d-%m-%Y')
             df_log["Month"] = df_log["date"].dt.strftime('%B %Y')
 
-            # 2. SEARCH & FILTER (Suggestion #5)
+            # 2. SEARCH & FILTER
             c1, c2 = st.columns([2, 1])
-            search_term = c1.text_input("🔍 Search Logs", placeholder="Type contractor, work description, or date...")
+            search_term = c1.text_input("🔍 Search Logs", placeholder="Type contractor, work description...")
             filter_month = c2.selectbox("Filter Month", ["All Months"] + df_log["Month"].unique().tolist())
 
-            # Apply Month Filter
             if filter_month != "All Months":
                 df_log = df_log[df_log["Month"] == filter_month]
 
-            # Apply Search Filter
             if search_term:
-                # This searches across all columns for the text you typed
                 mask = df_log.astype(str).apply(lambda x: x.str.contains(search_term, case=False)).any(axis=1)
                 df_log = df_log[mask]
 
-            # 3. DASHBOARD (Suggestion #1)
+            # 3. DASHBOARD
             st.divider()
             m1, m2, m3 = st.columns(3)
             total_spend = df_log["total_cost"].sum()
@@ -321,13 +330,13 @@ elif current_tab == "🔍 Site Logs (Day-to-Day)":
             m2.metric("👷 Top Contractor", top_contractor)
             m3.metric("📅 Work Days Logged", total_days)
 
-            # Simple Bar Chart: Cost per Contractor
+            # Chart
             if not df_log.empty:
                 st.caption("💸 Spending by Contractor")
                 chart_data = df_log.groupby("contractor")["total_cost"].sum()
                 st.bar_chart(chart_data)
 
-            # 4. DOWNLOAD BUTTON (Suggestion #2)
+            # 4. DOWNLOAD BUTTON
             st.divider()
             c_csv = df_log.to_csv(index=False).encode('utf-8')
             st.download_button(
@@ -337,21 +346,23 @@ elif current_tab == "🔍 Site Logs (Day-to-Day)":
                 mime="text/csv",
             )
 
-            # Display Data Table
             st.dataframe(
                 df_log, 
                 use_container_width=True, 
                 hide_index=True,
                 column_config={
+                    "date": None,
+                    "Date": st.column_config.TextColumn("Date"),
                     "total_cost": st.column_config.NumberColumn("Cost", format="₹%d"),
                     "work_description": "Work Done"
-                }
+                },
+                column_order=["Date", "site", "contractor", "work_description", "total_cost", "count_mason", "count_helper", "count_ladies"]
             )
         else:
             st.info("No entries found for this site.")
 
 # ==========================
-# 3. WEEKLY BILL (Updated with Download)
+# 3. WEEKLY BILL
 # ==========================
 elif current_tab == "📊 Weekly Bill (Details)":
     st.subheader("📊 Detailed Weekly Bill")
@@ -371,14 +382,19 @@ elif current_tab == "📊 Weekly Bill (Details)":
         # Billing periods
         df_e["start_date"] = df_e["date"].apply(get_billing_start_date)
         df_e["end_date"] = df_e["start_date"] + timedelta(days=6)
-        df_e["Billing Period"] = df_e.apply(lambda x: f"{x['start_date'].strftime('%d %b')} - {x['end_date'].strftime('%d %b')}", axis=1)
+        
+        # --- DATE FORMAT FIX: Billing Period ---
+        df_e["Billing Period"] = df_e.apply(
+            lambda x: f"{x['start_date'].strftime('%d-%m-%Y')} to {x['end_date'].strftime('%d-%m-%Y')}", 
+            axis=1
+        )
         
         # Aggregate
         report = df_e.groupby(["Billing Period", "start_date", "contractor", "site"])[
             ["total_cost", "count_mason", "count_helper", "count_ladies", "amt_mason", "amt_helper", "amt_ladies"]
         ].sum().reset_index()
         
-        # --- NEW: DOWNLOAD BUTTON ---
+        # --- DOWNLOAD BUTTON ---
         csv_bill = report.to_csv(index=False).encode('utf-8')
         st.download_button(
             label="📥 Download Weekly Bill (CSV)",
@@ -387,7 +403,6 @@ elif current_tab == "📊 Weekly Bill (Details)":
             mime="text/csv",
             type="primary"
         )
-        # ----------------------------
 
         st.dataframe(
             report,
@@ -407,10 +422,14 @@ elif current_tab == "📊 Weekly Bill (Details)":
         if "edit_count" in df_e.columns:
             edited_df = df_e[df_e["edit_count"] > 0]
             if not edited_df.empty:
+                # Format the date in audit log too
+                edited_df["date"] = pd.to_datetime(edited_df["date"]).dt.strftime('%d-%m-%Y')
                 st.dataframe(edited_df[["date", "site", "contractor", "total_cost", "original_values", "edit_count"]], hide_index=True)
+    else:
+        st.info("No entries found.")
 
 # ==========================
-# 4. PAYMENT SUMMARY (UPDATED WITH BREAKDOWN)
+# 4. PAYMENT SUMMARY
 # ==========================
 elif current_tab == "💰 Payment Summary":
     st.subheader("💰 Weekly Payment Dashboard")
@@ -427,7 +446,12 @@ elif current_tab == "💰 Payment Summary":
             
         df_e["start_date"] = df_e["date"].apply(get_billing_start_date)
         df_e["end_date"] = df_e["start_date"] + timedelta(days=6)
-        df_e["Billing Period"] = df_e.apply(lambda x: f"{x['start_date'].strftime('%d %b')} - {x['end_date'].strftime('%d %b')}", axis=1)
+        
+        # --- DATE FORMAT FIX: Billing Period ---
+        df_e["Billing Period"] = df_e.apply(
+            lambda x: f"{x['start_date'].strftime('%d-%m-%Y')} to {x['end_date'].strftime('%d-%m-%Y')}", 
+            axis=1
+        )
         
         weeks_df = df_e[["Billing Period", "start_date"]].drop_duplicates().sort_values("start_date", ascending=False)
         
@@ -553,3 +577,105 @@ elif current_tab == "👥 Users":
             supabase.table("users").insert({"phone": u_ph, "name": u_nm, "role": u_role, "assigned_site": s_val}).execute()
         st.success("User Saved!")
         st.rerun()
+
+# ==========================
+# 8. BACKUP & RESTORE (NEW)
+# ==========================
+elif current_tab == "💾 Backup & Restore":
+    st.subheader("💾 Backup & Restore Database")
+    st.markdown("""
+    **Use this section to keep your data safe.**
+    1. **Backup:** Download a JSON file containing ALL entries, contractors, users, and sites.
+    2. **Restore:** If data is ever lost, upload that JSON file here to recover it.
+    """)
+    
+    # --- SECTION A: BACKUP ---
+    st.write("### 📤 Export Data (Backup)")
+    if st.button("Generate Full Backup"):
+        # Fetch all tables
+        data_entries = fetch_data("entries").to_dict(orient="records")
+        data_contractors = fetch_data("contractors").to_dict(orient="records")
+        data_sites = fetch_data("sites").to_dict(orient="records")
+        data_users = fetch_data("users").to_dict(orient="records")
+        
+        # Create a single JSON object
+        full_backup = {
+            "entries": data_entries,
+            "contractors": data_contractors,
+            "sites": data_sites,
+            "users": data_users,
+            "backup_date": str(datetime.now())
+        }
+        
+        # Convert to JSON string
+        json_str = json.dumps(full_backup, indent=4, default=str)
+        
+        # Download Button
+        st.download_button(
+            label="📥 Download Backup File (.json)",
+            data=json_str,
+            file_name=f"labourpro_backup_{date.today()}.json",
+            mime="application/json",
+            type="primary"
+        )
+    
+    st.divider()
+    
+    # --- SECTION B: RESTORE ---
+    st.write("### 📥 Import Data (Restore)")
+    st.warning("⚠️ **Warning:** Importing data will ADD missing items. It will not delete existing data, but be careful of duplicates.")
+    
+    uploaded_file = st.file_uploader("Upload Backup JSON File", type=["json"])
+    
+    if uploaded_file is not None:
+        try:
+            # Read JSON
+            backup_data = json.load(uploaded_file)
+            
+            if st.button("🔴 Start Restoration Process"):
+                progress_bar = st.progress(0)
+                status_text = st.empty()
+                
+                # 1. Restore Sites
+                if "sites" in backup_data:
+                    status_text.text("Restoring Sites...")
+                    for item in backup_data["sites"]:
+                        try:
+                            supabase.table("sites").upsert(item).execute()
+                        except: pass
+                progress_bar.progress(25)
+                
+                # 2. Restore Contractors
+                if "contractors" in backup_data:
+                    status_text.text("Restoring Contractors...")
+                    for item in backup_data["contractors"]:
+                        try:
+                            # Remove ID if it conflicts, or use UPSERT
+                            supabase.table("contractors").upsert(item).execute()
+                        except: pass
+                progress_bar.progress(50)
+                
+                # 3. Restore Users
+                if "users" in backup_data:
+                    status_text.text("Restoring Users...")
+                    for item in backup_data["users"]:
+                        try:
+                            supabase.table("users").upsert(item).execute()
+                        except: pass
+                progress_bar.progress(75)
+
+                # 4. Restore Entries (The big one)
+                if "entries" in backup_data:
+                    status_text.text("Restoring Work Entries (this may take a moment)...")
+                    for item in backup_data["entries"]:
+                        try:
+                            # Clean up ID if needed, or let Supabase handle upsert
+                            supabase.table("entries").upsert(item).execute()
+                        except: pass
+                progress_bar.progress(100)
+                
+                status_text.text("✅ Restoration Complete!")
+                st.success("Data successfully restored from backup!")
+                
+        except Exception as e:
+            st.error(f"Error parsing file: {e}")
