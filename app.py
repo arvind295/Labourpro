@@ -256,7 +256,7 @@ if current_tab == "📝 Daily Entry":
 
         st.subheader("📝 New Work Entry")
         c1, c2, c3 = st.columns(3)
-        dt = c1.date_input("Date", date.today())
+        dt = c1.date_input("Date", date.today(), format="DD-MM-YYYY")  # Updated Format
         st_sel = c2.selectbox("Site", av_sites)
         
         con_options = df_con["name"].unique() if not df_con.empty else []
@@ -438,7 +438,8 @@ elif current_tab == "👷 Contractors":
         r_ladies = c3.number_input("Ladies Rate (₹)", value=0, step=10)
         
         # KEY FEATURE: Effective Date
-        eff_date = st.date_input("📅 New Prices Effective From", value=date.today())
+        # UPDATED: Added format="DD-MM-YYYY"
+        eff_date = st.date_input("📅 New Prices Effective From", value=date.today(), format="DD-MM-YYYY")
         
         submitted = st.form_submit_button("💾 Save Rate Card", type="primary", use_container_width=True)
         
@@ -645,9 +646,6 @@ elif current_tab == "📂 Archive & Recovery":
                         status_text.write("Restoring Contractors...")
                         clean_cons = clean_for_insert(data["contractors"])
                         try:
-                            # Using upsert here might be tricky if IDs are involved,
-                            # but safer than straight insert if duplicates exist.
-                            # Best effort for recovery:
                             supabase.table("contractors").upsert(clean_cons).execute()
                         except:
                             pass
