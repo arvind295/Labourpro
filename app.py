@@ -25,7 +25,7 @@ except Exception:
     st.error("⚠️ Supabase connection failed. Check secrets.toml.")
     st.stop()
 
-# --- 3. CUSTOM STYLING (DARK MODE PROOF) ---
+# --- 3. CUSTOM STYLING (DARK MODE PROOF - NUCLEAR FIX) ---
 def apply_custom_styling():
     st.markdown("""
         <style>
@@ -34,37 +34,42 @@ def apply_custom_styling():
 
         /* 1. FORCE LIGHT THEME BACKGROUNDS */
         .stApp {
-            background-color: #F4F6F9; /* Light Grey Background */
+            background-color: #F4F6F9 !important; /* Light Grey Background */
+            color: #000000 !important;
             font-family: 'Inter', sans-serif;
         }
         
-        /* 2. FORCE TEXT COLORS TO BE DARK (Important for Dark Mode users) */
-        h1, h2, h3, h4, h5, h6, p, div, span, label, li {
+        /* 2. FORCE TEXT COLORS TO BE DARK (Override Dark Mode Defaults) */
+        h1, h2, h3, h4, h5, h6, p, div, span, li {
             color: #2C3E50 !important; /* Dark Blue-Grey */
         }
         
-        /* 3. FIX INPUT FIELDS (Prevent White-on-White text) */
+        /* 3. FIX "GHOST" LABELS (The text above input boxes) */
+        label[data-testid="stLabel"], .stRadio label, div[data-testid="stMarkdownContainer"] p {
+            color: #2C3E50 !important;
+        }
+        
+        /* 4. FIX INPUT BOXES (Force them White with Black Text) */
         div[data-baseweb="input"] {
             background-color: #FFFFFF !important;
             border: 1px solid #D0D3D4 !important;
         }
-        input, textarea, .stDateInput input {
+        input, textarea {
             color: #000000 !important; /* Force Black Text inside inputs */
             -webkit-text-fill-color: #000000 !important;
+            caret-color: #000000 !important; /* Black typing cursor */
         }
         
-        /* Fix the labels above inputs */
-        .stTextInput label, .stNumberInput label, .stSelectbox label, .stDateInput label {
-            color: #4F5B66 !important;
-        }
-        
-        /* Fix Selectbox Text */
+        /* 5. FIX DROPDOWNS (Selectbox) */
         div[data-baseweb="select"] > div {
             background-color: #FFFFFF !important;
             color: #000000 !important;
         }
-
-        /* 4. CARDS (CONTAINERS) */
+        div[data-baseweb="popover"] {
+            background-color: #FFFFFF !important;
+        }
+        
+        /* 6. CARDS (CONTAINERS) */
         [data-testid="stVerticalBlock"] > [style*="flex-direction: column;"] > [data-testid="stVerticalBlock"] {
             background-color: #FFFFFF;
             padding: 24px;
@@ -73,7 +78,7 @@ def apply_custom_styling():
             border: 1px solid #E0E0E0;
         }
 
-        /* 5. BUTTONS */
+        /* 7. BUTTONS */
         div.stButton > button[kind="primary"] {
             background-color: #F39C12 !important;
             color: white !important;
@@ -96,12 +101,12 @@ def apply_custom_styling():
             border-radius: 8px;
         }
         
-        /* 6. METRICS */
+        /* 8. METRICS */
         [data-testid="stMetricValue"] {
             color: #2980B9 !important; /* Blue numbers */
         }
         
-        /* 7. HIDE DEFAULT MENU */
+        /* 9. HIDE DEFAULT MENU */
         #MainMenu {visibility: hidden;}
         footer {visibility: hidden;}
         
