@@ -24,100 +24,88 @@ except Exception:
     st.error("⚠️ Supabase connection failed. Check secrets.toml.")
     st.stop()
 
-# --- 3. CUSTOM STYLING (THE "ALL-WHITE" FIX) ---
-# This forces the app to look like standard paper/excel (White bg, Black text)
+# --- 3. CUSTOM STYLING (THE "NUCLEAR" TEXT FIX) ---
 def apply_custom_styling():
     st.markdown("""
         <style>
-        /* Force entire page background to white */
-        .stApp {
-            background-color: #FFFFFF !important;
-            color: #000000 !important;
-        }
-
-        /* --- SIDEBAR FIX --- */
-        section[data-testid="stSidebar"] {
-            background-color: #F8F9FA !important; /* Light Grey Sidebar */
-            border-right: 1px solid #E0E0E0;
-        }
-        /* Fix text color in sidebar */
-        [data-testid="stSidebar"] * {
-            color: #31333F !important;
-        }
-
-        /* --- INPUTS, DROPDOWNS & SELECTBOXES --- */
-        /* Forces the input box background to white and text to black */
-        div[data-baseweb="select"] > div, 
-        div[data-baseweb="base-input"], 
-        input.stTextInput, 
-        div[data-baseweb="input"] {
-            background-color: #FFFFFF !important;
-            color: #000000 !important;
-            border: 1px solid #ced4da !important;
+        /* --- GLOBAL TEXT RESET --- */
+        html, body, [class*="css"] {
+            font-family: sans-serif;
+            color: #000000 !important; /* Force ALL text black */
         }
         
-        /* The text inside the input box when typing */
-        input {
-            color: #000000 !important; 
+        .stApp {
+            background-color: #FFFFFF !important;
+        }
+
+        /* --- SIDEBAR --- */
+        section[data-testid="stSidebar"] {
+            background-color: #F8F9FA !important;
+            border-right: 1px solid #E0E0E0;
+        }
+        [data-testid="stSidebar"] * {
+            color: #000000 !important; /* Force Sidebar text black */
+        }
+
+        /* --- INPUTS & LABELS (The Critical Fix) --- */
+        
+        /* 1. Labels above inputs */
+        .stTextInput label, .stNumberInput label, .stSelectbox label, .stDateInput label {
+            color: #000000 !important;
+            font-weight: 600 !important;
+        }
+        
+        /* 2. The Input Box Container */
+        div[data-baseweb="input"], div[data-baseweb="select"] > div {
+            background-color: #FFFFFF !important;
+            border: 1px solid #888 !important; /* Darker border for visibility */
+            color: #000000 !important;
+        }
+
+        /* 3. The Actual Typing Text */
+        input[type="text"], input[type="number"], input[type="password"] {
+            color: #000000 !important;
+            -webkit-text-fill-color: #000000 !important;
             caret-color: #000000 !important;
         }
 
-        /* The Dropdown Menu Options (The list that pops up) */
-        div[data-baseweb="popover"], div[data-baseweb="menu"], ul[role="listbox"] {
-            background-color: #FFFFFF !important;
-            border: 1px solid #ced4da !important;
+        /* 4. Placeholder Text (e.g. 'Enter mobile...') */
+        ::placeholder {
+            color: #666666 !important;
+            opacity: 1 !important;
         }
         
-        /* Individual options in the list */
+        /* --- DROPDOWNS --- */
+        div[data-baseweb="popover"] {
+            background-color: #FFFFFF !important;
+        }
         li[role="option"] {
             color: #000000 !important;
-            background-color: #FFFFFF !important;
         }
-        
-        /* Hover effect for options */
         li[role="option"]:hover {
-            background-color: #FFF3E0 !important; /* Light Orange hover */
-            color: #000000 !important;
+            background-color: #FFE0B2 !important;
         }
 
-        /* --- TABLES --- */
-        [data-testid="stDataFrame"], [data-testid="stTable"] {
+        /* --- METRICS & TABLES --- */
+        [data-testid="stMetricValue"], [data-testid="stMetricLabel"] {
+            color: #000000 !important;
+        }
+        
+        div[data-testid="stTable"] *, div[data-testid="stDataFrame"] * {
+            color: #000000 !important;
             background-color: #FFFFFF !important;
         }
         th {
-            background-color: #f8f9fa !important;
+            background-color: #E0E0E0 !important;
             color: #000000 !important;
-            font-weight: bold !important;
-            border-bottom: 2px solid #dee2e6 !important;
-        }
-        td {
-            color: #000000 !important;
-            background-color: #FFFFFF !important;
-            border-bottom: 1px solid #dee2e6 !important;
         }
 
-        /* --- ALERTS & INFO BOXES --- */
-        div.stAlert {
-            background-color: #E3F2FD !important; /* Light Blue */
-            color: #0D47A1 !important; /* Dark Blue Text */
-            border: 1px solid #90CAF9;
-        }
-        
         /* --- BUTTONS --- */
         div.stButton > button[kind="primary"] {
             background-color: #F39C12 !important;
             color: white !important;
             border: none;
         }
-        div.stButton > button[kind="secondary"] {
-            background-color: #FFFFFF !important;
-            color: #000000 !important;
-            border: 1px solid #ced4da;
-        }
-
-        /* Hide Streamlit footer */
-        #MainMenu {visibility: hidden;}
-        footer {visibility: hidden;}
         </style>
     """, unsafe_allow_html=True)
 
@@ -129,7 +117,6 @@ def fetch_data(table):
     return pd.DataFrame(response.data)
 
 def get_billing_start_date(entry_date):
-    """Calculates the Saturday that started the billing week."""
     days_since_saturday = (entry_date.weekday() + 2) % 7
     return entry_date - timedelta(days=days_since_saturday)
 
@@ -140,14 +127,16 @@ if "logged_in" not in st.session_state:
 def login_process():
     col1, col2, col3 = st.columns([1,2,1])
     with col2:
-        st.markdown("<h1 style='text-align: center;'>🏗️ LabourPro</h1>", unsafe_allow_html=True)
+        st.markdown("<h1 style='text-align: center; color: black;'>🏗️ LabourPro</h1>", unsafe_allow_html=True)
         st.divider()
         
         login_type = st.radio("Select Login Type:", ["User Login", "Admin Login"], horizontal=True)
 
         if login_type == "User Login":
             with st.form("user_login"):
-                phone = st.text_input("Enter Mobile Number", max_chars=10).strip()
+                # Explicit label color not needed due to global CSS, but adding for safety
+                st.markdown("<p style='color:black;'>Enter Mobile Number</p>", unsafe_allow_html=True)
+                phone = st.text_input("Mobile", label_visibility="collapsed", max_chars=10).strip()
                 submitted = st.form_submit_button("Login", type="primary")
                 if submitted:
                     if not phone: st.error("Please enter a mobile number.")
@@ -156,22 +145,24 @@ def login_process():
                             data = supabase.table("users").select("*").eq("phone", phone).execute().data
                             if data:
                                 user = data[0]
-                                if user.get("role") == "admin": st.warning("Admins should use the 'Admin Login' tab.")
+                                if user.get("role") == "admin": st.warning("Admins use Admin Login.")
                                 else:
                                     st.session_state.update({"logged_in": True, "phone": user["phone"], "role": "user"})
                                     st.rerun()
                             else: st.error("❌ Number not found.")
-                        except Exception: st.error("Connection Error.")
+                        except: st.error("Connection Error.")
 
         elif login_type == "Admin Login":
             with st.form("admin_login"):
-                phone = st.text_input("Admin Mobile Number", max_chars=10).strip()
-                password = st.text_input("Admin Password", type="password")
+                st.markdown("<p style='color:black;'>Admin Mobile Number</p>", unsafe_allow_html=True)
+                phone = st.text_input("Admin Mobile", label_visibility="collapsed").strip()
+                
+                st.markdown("<p style='color:black;'>Password</p>", unsafe_allow_html=True)
+                password = st.text_input("Password", type="password", label_visibility="collapsed")
+                
                 submitted = st.form_submit_button("Login as Admin", type="primary")
                 if submitted:
-                    # Replace 'admin123' with your actual secure password if needed
                     real_admin_pass = st.secrets["general"]["admin_password"] if "general" in st.secrets else "admin123"
-                    
                     if password != real_admin_pass: st.error("❌ Incorrect Password")
                     else:
                         try:
@@ -180,7 +171,7 @@ def login_process():
                                 st.session_state.update({"logged_in": True, "phone": data[0]["phone"], "role": "admin"})
                                 st.rerun()
                             else: st.error("⛔ No Admin privileges.")
-                        except Exception: st.error("Connection Error.")
+                        except: st.error("Connection Error.")
 
 if not st.session_state["logged_in"]:
     login_process()
@@ -215,7 +206,6 @@ if current_tab == "📝 Daily Entry":
         st.warning("⚠️ Admin must add Sites and Contractors first.")
     else:
         available_sites = df_sites["name"].unique().tolist()
-        # Filter sites for non-admins
         if my_role != "admin":
             try:
                 user_profile = supabase.table("users").select("assigned_site").eq("phone", st.session_state["phone"]).single().execute()
@@ -230,7 +220,7 @@ if current_tab == "📝 Daily Entry":
         site = c2.selectbox("Site", available_sites) 
         contractor = c3.selectbox("Contractor", df_con["name"].unique())
         
-        # Check existing entry
+        # Check existing
         existing_entry = None
         try:
             resp = supabase.table("entries").select("*").eq("date", str(entry_date)).eq("site", site).eq("contractor", contractor).execute()
@@ -256,10 +246,8 @@ if current_tab == "📝 Daily Entry":
         
         work_desc = st.text_area("Work Description", value=val_desc, placeholder="e.g. Plastering 2nd floor...")
 
-        # Calculate estimated cost live
         rate_row = None
         try:
-            # Get latest rate effective before or on entry date
             resp = supabase.table("contractors").select("*").eq("name", contractor).lte("effective_date", str(entry_date)).order("effective_date", desc=True).limit(1).execute()
             if resp.data: rate_row = resp.data[0]
         except: pass
@@ -275,17 +263,14 @@ if current_tab == "📝 Daily Entry":
                         "count_mason": n_mason, "count_helper": n_helper, "count_ladies": n_ladies,
                         "total_cost": total_est, "work_description": work_desc
                     }
-                    if mode == "new":
-                        supabase.table("entries").insert(payload).execute()
-                    else:
-                        supabase.table("entries").update(payload).eq("id", existing_entry["id"]).execute()
-                    st.success("Saved Successfully!")
-                    st.rerun()
+                    if mode == "new": supabase.table("entries").insert(payload).execute()
+                    else: supabase.table("entries").update(payload).eq("id", existing_entry["id"]).execute()
+                    st.success("Saved Successfully!"); st.rerun()
                 else: st.error("Please enter counts or description.")
         else: st.error("⚠️ No rate found for this contractor on this date.")
 
 # ==========================
-# 2. SITE LOGS (Updated: Shows M/H/L columns now)
+# 2. SITE LOGS (Fixed Columns)
 # ==========================
 elif current_tab == "🔍 Site Logs":
     st.subheader("🔍 Site Logs")
@@ -301,7 +286,6 @@ elif current_tab == "🔍 Site Logs":
             df_log["date"] = pd.to_datetime(df_log["date"])
             df_log["Date"] = df_log["date"].dt.strftime('%d-%m-%Y')
             
-            # Reorder and Rename for cleaner display
             df_display = df_log[[
                 "Date", "site", "contractor", 
                 "count_mason", "count_helper", "count_ladies", 
@@ -316,7 +300,7 @@ elif current_tab == "🔍 Site Logs":
         else: st.info("No logs found.")
 
 # ==========================
-# 3. WEEKLY BILL (MAJOR UPDATE: REPLICATING THE EXCEL IMAGE)
+# 3. WEEKLY BILL (The Excel Style)
 # ==========================
 elif current_tab == "📊 Weekly Bill":
     st.subheader("📊 Weekly Bill Report")
@@ -328,38 +312,26 @@ elif current_tab == "📊 Weekly Bill":
         df_e["date_dt"] = pd.to_datetime(df_e["date"])
         df_c["effective_date"] = pd.to_datetime(df_c["effective_date"]).dt.date
         
-        # Calculate Billing Periods
         df_e["start_date"] = df_e["date_dt"].dt.date.apply(get_billing_start_date)
         df_e["end_date"] = df_e["start_date"] + timedelta(days=6)
         df_e["period_label"] = df_e.apply(lambda x: f"{x['start_date'].strftime('%d-%m-%Y')} to {x['end_date'].strftime('%d-%m-%Y')}", axis=1)
         
-        # Select Week
         weeks = sorted(df_e["period_label"].unique(), reverse=True)
         selected_week = st.selectbox("Select Week", weeks)
         
-        # Filter Data for Week
         df_week = df_e[df_e["period_label"] == selected_week].copy()
-        
-        # Iterate Sites
         unique_sites = df_week["site"].unique()
         
         for site_name in unique_sites:
             st.markdown(f"### 📍 Site: {site_name}")
             df_site = df_week[df_week["site"] == site_name]
-            
-            # Iterate Contractors in that Site
             unique_cons = df_site["contractor"].unique()
+            
             for con_name in unique_cons:
                 df_con_entries = df_site[df_site["contractor"] == con_name].sort_values("date")
                 
-                # Fetch Rates for this contractor
-                # We take the max rate found in the week window (simplification) or look up explicitly
-                # For display, we will calculate exact totals based on saved 'total_cost'
-                
-                # Prepare the "Excel-like" Dataframe
                 display_rows = []
-                total_m, total_h, total_l = 0, 0, 0
-                total_amt = 0
+                total_m, total_h, total_l, total_amt = 0, 0, 0, 0
                 
                 for _, row in df_con_entries.iterrows():
                     d_str = row["date_dt"].strftime("%d-%m-%Y")
@@ -374,72 +346,55 @@ elif current_tab == "📊 Weekly Bill":
                     total_l += row["count_ladies"]
                     total_amt += row["total_cost"]
 
-                # Get the rate used (Approximation based on last entry or lookup)
-                # To be precise, we calculate rate = Cost / Count, but let's look up from DB
-                r_m, r_h, r_l = 0, 0, 0
                 rates = df_c[(df_c["name"] == con_name)].sort_values("effective_date", ascending=False)
+                r_m, r_h, r_l = 0, 0, 0
                 if not rates.empty:
-                    curr_rate = rates.iloc[0]
-                    r_m, r_h, r_l = curr_rate["rate_mason"], curr_rate["rate_helper"], curr_rate["rate_ladies"]
+                    curr = rates.iloc[0]
+                    r_m, r_h, r_l = curr["rate_mason"], curr["rate_helper"], curr["rate_ladies"]
 
-                # Create DataFrame
-                bill_df = pd.DataFrame(display_rows)
+                bill_df = pd.DataFrame(display_rows).astype(str)
                 
-                # Convert to string to allow adding "Total" text
-                bill_df = bill_df.astype(str)
-                
-                # Append "Total Labour" Row
-                total_row = {
+                # Totals
+                bill_df = pd.concat([bill_df, pd.DataFrame([{
                     "Date": "<b>Total Labour</b>",
                     "Mason": f"<b>{total_m}</b>",
                     "Helper": f"<b>{total_h}</b>",
                     "Ladies": f"<b>{total_l}</b>"
-                }
-                bill_df = pd.concat([bill_df, pd.DataFrame([total_row])], ignore_index=True)
+                }])], ignore_index=True)
                 
-                # Append "Amount" Row (Calculated: Count * Rate)
-                cost_m = total_m * r_m
-                cost_h = total_h * r_h
-                cost_l = total_l * r_l
-                
-                amount_row = {
+                # Amount
+                bill_df = pd.concat([bill_df, pd.DataFrame([{
                     "Date": "<b>Amount (₹)</b>",
-                    "Mason": f"₹{cost_m:,.0f}",
-                    "Helper": f"₹{cost_h:,.0f}",
-                    "Ladies": f"₹{cost_l:,.0f}"
-                }
-                bill_df = pd.concat([bill_df, pd.DataFrame([amount_row])], ignore_index=True)
+                    "Mason": f"₹{total_m * r_m:,.0f}",
+                    "Helper": f"₹{total_h * r_h:,.0f}",
+                    "Ladies": f"₹{total_l * r_l:,.0f}"
+                }])], ignore_index=True)
 
-                # Append "Total Amount" Row (Grand Total)
-                grand_total_row = {
+                # Grand Total
+                bill_df = pd.concat([bill_df, pd.DataFrame([{
                     "Date": "<b>Total Amount</b>",
                     "Mason": "",
-                    "Helper": f"<b>₹{total_amt:,.0f}</b>", # Display in middle or merged
+                    "Helper": f"<b>₹{total_amt:,.0f}</b>", 
                     "Ladies": ""
-                }
-                bill_df = pd.concat([bill_df, pd.DataFrame([grand_total_row])], ignore_index=True)
+                }])], ignore_index=True)
 
-                # DISPLAY THE BILL
                 st.markdown(f"#### 👷 Contractor: {con_name}")
-                # Use HTML to render bold text
                 st.write(bill_df.to_html(escape=False, index=False, classes="table table-bordered"), unsafe_allow_html=True)
                 st.divider()
 
 # ==========================
-# 4. SITES & CONTRACTORS
+# 4. ADMIN SETUP (Sites/Contractors/Users/Backup)
 # ==========================
 elif current_tab == "📍 Sites":
     st.subheader("📍 Manage Sites")
-    df = fetch_data("sites")
-    st.dataframe(df, hide_index=True, use_container_width=True)
+    st.dataframe(fetch_data("sites"), hide_index=True, use_container_width=True)
     new = st.text_input("New Site Name")
     if st.button("Add Site", type="primary"):
         if new: supabase.table("sites").insert({"name": new}).execute(); st.rerun()
 
 elif current_tab == "👷 Contractors":
     st.subheader("👷 Manage Contractors")
-    df = fetch_data("contractors")
-    st.dataframe(df, use_container_width=True)
+    st.dataframe(fetch_data("contractors"), use_container_width=True)
     with st.form("add_con"):
         n = st.text_input("Name")
         c1, c2, c3 = st.columns(3)
@@ -451,13 +406,9 @@ elif current_tab == "👷 Contractors":
             supabase.table("contractors").insert({"name": n, "rate_mason": r1, "rate_helper": r2, "rate_ladies": r3, "effective_date": str(d)}).execute()
             st.rerun()
 
-# ==========================
-# 5. USERS & BACKUP
-# ==========================
 elif current_tab == "👥 Users":
     st.subheader("👥 User Access")
-    df = fetch_data("users")
-    st.dataframe(df, use_container_width=True)
+    st.dataframe(fetch_data("users"), use_container_width=True)
     with st.form("add_user"):
         ph = st.text_input("Phone")
         nm = st.text_input("Name")
@@ -466,7 +417,6 @@ elif current_tab == "👥 Users":
         st_as = st.selectbox("Assign Site", ["None/All"] + site_opts)
         if st.form_submit_button("Save User", type="primary"):
             sv = None if st_as == "None/All" else st_as
-            # Check exist
             ext = supabase.table("users").select("*").eq("phone", ph).execute().data
             if ext: supabase.table("users").update({"name": nm, "role": rl, "assigned_site": sv}).eq("phone", ph).execute()
             else: supabase.table("users").insert({"phone": ph, "name": nm, "role": rl, "assigned_site": sv}).execute()
