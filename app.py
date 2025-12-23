@@ -69,35 +69,68 @@ if "logged_in" not in st.session_state:
     st.session_state.update({"logged_in": False, "phone": None, "role": None})
 
 def login_process():
-    st.title("🏗️ Login")
-    phone = st.text_input("Mobile Number", max_chars=10).strip()
-    if st.button("Login"):
-        try:
-            user_data = supabase.table("users").select("*").eq("phone", phone).execute().data
-            if user_data:
-                user = user_data[0]
-                if user["role"] == "admin":
-                    st.session_state["temp_user"] = user
-                    st.session_state["awaiting_pass"] = True
-                    st.rerun()
-                else:
-                    st.session_state.update({"logged_in": True, "phone": user["phone"], "role": "user"})
-                    st.rerun()
-            else:
-                st.error("❌ Number not found.")
-        except Exception as e:
-            st.error(f"Error: {e}")
+    st.title("🏗️ LabourPro Login")
+    
+    # 1. Toggle between User and Admin
+    login_type = st.radio("Select Login Type:", ["User Login", "Admin Login"], horizontal=True)
 
-    if st.session_state.get("awaiting_pass", False):
-        st.info(f"Admin: {st.session_state['temp_user']['phone']}")
-        if st.text_input("Password", type="password") == ADMIN_PASSWORD:
-            st.session_state.update({
-                "logged_in": True, 
-                "phone": st.session_state['temp_user']['phone'], 
-                "role": "admin", 
-                "awaiting_pass": False
-            })
-            st.rerun()
+    # --- USER LOGIN (Worker) ---
+    if login_type == "User Login":
+        st.subheader("Worker Access")
+        with st.form("user_login"):
+            phone = st.text_input("Enter Mobile Number", max_chars=10).strip()
+            submitted = st.form_submit_button("Login")
+            
+            if submitted:
+                if not phone:
+                    st.error("Please enter a mobile number.")
+                else:
+                    try:
+                        # Check DB for user
+                        data = supabase.table("users").select("*").eq("phone", phone).execute().data
+                        if data:
+                            user = data[0]
+                            if user.get("role") == "admin":
+                                st.warning("Admins should use the 'Admin Login' tab.")
+                            else:
+                                st.session_state.update({"logged_in": True, "phone": user["phone"], "role": "user"})
+                                st.success(f"Welcome, {user.get('name', 'User')}!")
+                                st.rerun()
+                        else:
+                            st.error("❌ Number not found. Please contact Admin.")
+                    except Exception as e:
+                        st.error(f"Connection Error: {e}")
+
+    # --- ADMIN LOGIN ---
+    elif login_type == "Admin Login":
+        st.subheader("Admin Access")
+        with st.form("admin_login"):
+            phone = st.text_input("Admin Mobile Number", max_chars=10).strip()
+            # The password box with 'enter' key support
+            password = st.text_input("Admin Password", type="password")
+            submitted = st.form_submit_button("Login as Admin")
+            
+            if submitted:
+                if not phone or not password:
+                    st.error("Please enter both Mobile Number and Password.")
+                elif password != ADMIN_PASSWORD:
+                    st.error("❌ Incorrect Password")
+                else:
+                    try:
+                        # Check DB to ensure this number is actually an admin
+                        data = supabase.table("users").select("*").eq("phone", phone).execute().data
+                        if data:
+                            user = data[0]
+                            if user.get("role") == "admin":
+                                st.session_state.update({"logged_in": True, "phone": user["phone"], "role": "admin"})
+                                st.success("✅ Admin Access Granted")
+                                st.rerun()
+                            else:
+                                st.error("⛔ This number does not have Admin privileges.")
+                        else:
+                            st.error("❌ Admin number not found in database.")
+                    except Exception as e:
+                        st.error(f"Connection Error: {e}")
 
 if not st.session_state["logged_in"]:
     login_process()
