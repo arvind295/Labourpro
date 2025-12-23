@@ -108,7 +108,7 @@ def render_weekly_bill(df_entries, df_contractors):
             if not rates.empty:
                 rm, rh, rl = rates.iloc[0]["rate_mason"], rates.iloc[0]["rate_helper"], rates.iloc[0]["rate_ladies"]
             
-            # --- FIX: Removed indentation from HTML strings to prevent code-block rendering ---
+            # --- HTML TABLE ---
             html = f"""
 <table style="width:100%; border-collapse: collapse; color: black; background: white; font-size: 14px;">
 <tr style="background: #e0e0e0; border-bottom: 2px solid black;">
@@ -280,12 +280,69 @@ elif current_tab == "📊 Weekly Bill":
         render_weekly_bill(df_e, df_c)
 
 # ==========================
-# 3. ADMIN MGMT
+# 3. ADMIN MGMT (UPDATED SITES)
 # ==========================
 elif current_tab == "📍 Sites":
-    st.dataframe(fetch_data("sites"), hide_index=True, use_container_width=True)
-    n = st.text_input("New Site"); 
-    if st.button("Add"): supabase.table("sites").insert({"name": n}).execute(); st.rerun()
+    st.subheader("📍 Site Management")
+    df_sites = fetch_data("sites")
+    st.dataframe(df_sites, hide_index=True, use_container_width=True)
+    
+    col_add, col_del = st.columns(2)
+    
+    # 1. ADD SITE
+    with col_add:
+        st.markdown("### ➕ Add Site")
+        n = st.text_input("New Site Name")
+        if st.button("Add Site", type="primary"):
+            supabase.table("sites").insert({"name": n}).execute()
+            st.success(f"Added {n}")
+            st.rerun()
+
+    # 2. DELETE SITE (LOCKED)
+    with col_del:
+        st.markdown("### 🗑️ Delete Site")
+        
+        # Lock Logic
+        if "site_backup_unlocked" not in st.session_state:
+            st.session_state["site_backup_unlocked"] = False
+        
+        def unlock_site_delete():
+            st.session_state["site_backup_unlocked"] = True
+
+        # Backup Button
+        backup_data = {
+            "entries": fetch_data("entries").to_dict("records"),
+            "contractors": fetch_data("contractors").to_dict("records"),
+            "sites": fetch_data("sites").to_dict("records"),
+            "users": fetch_data("users").to_dict("records"),
+            "timestamp": str(datetime.now())
+        }
+        
+        st.info("⚠️ Backup required before deletion.")
+        st.download_button(
+            label="1️⃣ Download Backup to Unlock",
+            data=json.dumps(backup_data, indent=4, default=str),
+            file_name=f"Site_Safety_Backup_{date.today()}.json",
+            mime="application/json",
+            on_click=unlock_site_delete
+        )
+        
+        # Delete Interface
+        if not df_sites.empty:
+            del_site = st.selectbox("Select Site to Delete", df_sites["name"].unique())
+            
+            # Button Disabled until unlocked
+            if st.button("2️⃣ Permanently Delete Site", disabled=not st.session_state["site_backup_unlocked"]):
+                try:
+                    supabase.table("sites").delete().eq("name", del_site).execute()
+                    st.success(f"Site '{del_site}' deleted.")
+                    st.session_state["site_backup_unlocked"] = False # Relock
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Error: {e}")
+        else:
+            st.write("No sites to delete.")
+
 
 elif current_tab == "👷 Contractors":
     st.dataframe(fetch_data("contractors"), use_container_width=True)
@@ -297,15 +354,11 @@ elif current_tab == "👷 Contractors":
 
 elif current_tab == "👥 Users":
     st.subheader("👥 User Management")
-
-    # 1. VIEW USERS
     df_users = fetch_data("users")
     st.dataframe(df_users, use_container_width=True)
     st.divider()
 
     c1, c2 = st.columns(2)
-
-    # 2. ADD / UPDATE USER
     with c1:
         st.markdown("### ✏️ Add or Edit User")
         st.info("To **change a site**, enter the user's phone, select the new site, and click Save.")
@@ -313,150 +366,74 @@ elif current_tab == "👥 Users":
             phone_input = st.text_input("Mobile Number (Unique ID)", max_chars=10)
             name_input = st.text_input("User Name")
             role_input = st.selectbox("Role", ["user", "admin"])
-            
-            # Fetch sites for dropdown
             site_data = fetch_data("sites")
             site_list = ["None/All"] + site_data["name"].tolist() if not site_data.empty else ["None/All"]
-            
             site_input = st.selectbox("Assign Site", site_list)
-            
-            submitted = st.form_submit_button("💾 Save / Update", type="primary")
-            
-            if submitted:
-                if not phone_input:
-                    st.error("Phone number is required.")
+            if st.form_submit_button("💾 Save / Update", type="primary"):
+                if not phone_input: st.error("Phone required.")
                 else:
                     assigned_val = None if site_input == "None/All" else site_input
-                    
-                    # Check if exists
                     existing = supabase.table("users").select("*").eq("phone", phone_input).execute().data
-                    
                     if existing:
-                        # Update
-                        supabase.table("users").update({
-                            "name": name_input, 
-                            "role": role_input, 
-                            "assigned_site": assigned_val
-                        }).eq("phone", phone_input).execute()
-                        st.success(f"✅ User '{name_input}' updated successfully!")
+                        supabase.table("users").update({"name": name_input, "role": role_input, "assigned_site": assigned_val}).eq("phone", phone_input).execute()
+                        st.success(f"Updated {name_input}")
                     else:
-                        # Insert
-                        supabase.table("users").insert({
-                            "phone": phone_input, 
-                            "name": name_input, 
-                            "role": role_input, 
-                            "assigned_site": assigned_val
-                        }).execute()
-                        st.success(f"✅ New user '{name_input}' added!")
+                        supabase.table("users").insert({"phone": phone_input, "name": name_input, "role": role_input, "assigned_site": assigned_val}).execute()
+                        st.success(f"Added {name_input}")
                     st.rerun()
 
-    # 3. DELETE USER
     with c2:
         st.markdown("### ❌ Delete User")
-        st.warning("This action cannot be undone.")
-        
+        st.warning("Admins cannot be deleted here.")
         if not df_users.empty:
-            # Create a list of strings like "Name (Phone)" for the dropdown
-            user_options = [f"{row['name']} ({row['phone']})" for index, row in df_users.iterrows()]
-            selected_user_str = st.selectbox("Select User to Remove", user_options)
-            
-            # Extract phone number from the string
-            if selected_user_str:
-                selected_phone = selected_user_str.split("(")[-1].replace(")", "")
-                
-                if st.button("🗑️ Permanently Delete User"):
-                    try:
+            df_deletable = df_users[df_users["role"] != "admin"]
+            if not df_deletable.empty:
+                user_options = [f"{row['name']} ({row['phone']})" for index, row in df_deletable.iterrows()]
+                selected_user_str = st.selectbox("Select User to Remove", user_options)
+                if selected_user_str:
+                    selected_phone = selected_user_str.split("(")[-1].replace(")", "")
+                    if st.button("🗑️ Permanently Delete User"):
                         supabase.table("users").delete().eq("phone", selected_phone).execute()
-                        st.success("User deleted.")
-                        st.rerun()
-                    except Exception as e:
-                        st.error(f"Error: {e}")
-        else:
-            st.info("No users to delete.")
+                        st.success("User deleted."); st.rerun()
+            else: st.info("No User accounts found.")
 
 # ==========================
 # 4. ARCHIVE & NEW YEAR
 # ==========================
 elif current_tab == "📂 Archive & New Year":
     st.subheader("📂 Data Management")
-    
     tab1, tab2 = st.tabs(["🚀 Start New Year (Reset)", "📜 View Old Archives"])
-
-    # --- TAB 1: RESET LOGIC ---
     with tab1:
         st.markdown("### Step 1: Mandatory Backup")
         st.info("You must download a backup before you can clear data.")
-        
-        # Session state to track if backup was clicked
         if "backup_unlocked" not in st.session_state: st.session_state["backup_unlocked"] = False
-        
         def unlock_delete(): st.session_state["backup_unlocked"] = True
-        
-        # Prepare Data
-        backup_data = {
-            "entries": fetch_data("entries").to_dict("records"),
-            "contractors": fetch_data("contractors").to_dict("records"),
-            "sites": fetch_data("sites").to_dict("records"),
-            "users": fetch_data("users").to_dict("records"),
-            "timestamp": str(datetime.now())
-        }
-        
-        st.download_button(
-            label="1️⃣ Download Full Backup JSON",
-            data=json.dumps(backup_data, indent=4, default=str),
-            file_name=f"LabourPro_Backup_{date.today()}.json",
-            mime="application/json",
-            type="primary",
-            on_click=unlock_delete
-        )
-        
+        backup_data = {"entries": fetch_data("entries").to_dict("records"), "contractors": fetch_data("contractors").to_dict("records"), "sites": fetch_data("sites").to_dict("records"), "users": fetch_data("users").to_dict("records"), "timestamp": str(datetime.now())}
+        st.download_button(label="1️⃣ Download Full Backup JSON", data=json.dumps(backup_data, indent=4, default=str), file_name=f"LabourPro_Backup_{date.today()}.json", mime="application/json", type="primary", on_click=unlock_delete)
         st.divider()
-        
         st.markdown("### Step 2: Clear Data")
         st.write("This will delete **ALL Daily Entries**. Sites, Users, and Contractors will remain.")
-        
         confirm_text = st.text_input("Type 'DELETE ALL' to confirm:")
-        
-        # Button is DISABLED unless backup is unlocked
         if st.button("2️⃣ 🔥 Clear Entries & Start Fresh", type="primary", disabled=not st.session_state["backup_unlocked"]):
             if confirm_text == "DELETE ALL":
                 try:
                     supabase.table("entries").delete().neq("id", 0).execute()
-                    st.success("✅ System Reset Successful! Welcome to the new year.")
-                    st.balloons()
-                    st.session_state["backup_unlocked"] = False # Re-lock
+                    st.success("✅ System Reset Successful!"); st.balloons()
+                    st.session_state["backup_unlocked"] = False
                 except Exception as e: st.error(f"Error: {e}")
-            else:
-                st.error("❌ You must type 'DELETE ALL' exactly.")
-        elif not st.session_state["backup_unlocked"]:
-            st.warning("🚫 Delete button is locked. Please download the backup first.")
-
-    # --- TAB 2: VIEWER LOGIC ---
+            else: st.error("❌ Type 'DELETE ALL' exactly.")
     with tab2:
         st.markdown("### 📜 Archive Viewer")
-        st.write("Upload an old JSON backup file to view its data without restoring it.")
-        
         uploaded_file = st.file_uploader("Upload Backup JSON", type=["json"])
-        
         if uploaded_file is not None:
             try:
                 data = json.load(uploaded_file)
-                st.success("✅ File Loaded Successfully")
-                
-                # Extract Dataframes from JSON
-                archive_entries = pd.DataFrame(data.get("entries", []))
-                archive_contractors = pd.DataFrame(data.get("contractors", []))
-                
-                if not archive_entries.empty:
-                    view_mode = st.radio("Select View:", ["Weekly Bill View", "Raw Logs View"], horizontal=True)
-                    
-                    if view_mode == "Weekly Bill View":
-                        render_weekly_bill(archive_entries, archive_contractors)
-                        
-                    elif view_mode == "Raw Logs View":
-                         archive_entries["date"] = pd.to_datetime(archive_entries["date"]).dt.strftime('%d-%m-%Y')
-                         st.dataframe(archive_entries, use_container_width=True)
-                else:
-                    st.warning("⚠️ No entries found in this backup file.")
-            except Exception as e:
-                st.error(f"❌ Invalid JSON file: {e}")
+                st.success("✅ File Loaded")
+                ae = pd.DataFrame(data.get("entries", []))
+                ac = pd.DataFrame(data.get("contractors", []))
+                if not ae.empty:
+                    vm = st.radio("Select View:", ["Weekly Bill View", "Raw Logs View"], horizontal=True)
+                    if vm == "Weekly Bill View": render_weekly_bill(ae, ac)
+                    elif vm == "Raw Logs View": ae["date"] = pd.to_datetime(ae["date"]).dt.strftime('%d-%m-%Y'); st.dataframe(ae, use_container_width=True)
+                else: st.warning("⚠️ No entries found.")
+            except Exception as e: st.error(f"❌ Invalid JSON file: {e}")
