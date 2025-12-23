@@ -202,13 +202,15 @@ if current_tab == "📝 Daily Entry":
         mode = "new"
         current_edits = 0
         val_m, val_h, val_l = 0.0, 0.0, 0.0
+        val_desc = ""  # Default empty description
 
         if existing_entry:
             mode = "edit"
             current_edits = existing_entry.get("edit_count") or 0
-            val_m = float(existing_entry["count_mason"])
-            val_h = float(existing_entry["count_helper"])
-            val_l = float(existing_entry["count_ladies"])
+            val_m = float(existing_entry.get("count_mason", 0))
+            val_h = float(existing_entry.get("count_helper", 0))
+            val_l = float(existing_entry.get("count_ladies", 0))
+            val_desc = existing_entry.get("work_description", "")  # Load existing description
             
             if current_edits >= 2:
                 st.error(f"⛔ Locked: Edited 2 times already.")
@@ -216,10 +218,14 @@ if current_tab == "📝 Daily Entry":
             else:
                 st.warning(f"✏️ Editing existing entry. (Edits used: {current_edits}/2)")
 
+        # --- INPUTS ---
         k1, k2, k3 = st.columns(3)
         n_mason = k1.number_input("🧱 Masons", min_value=0.0, step=0.5, value=val_m, format="%.1f")
         n_helper = k2.number_input("👷 Helpers", min_value=0.0, step=0.5, value=val_h, format="%.1f")
         n_ladies = k3.number_input("👩 Ladies", min_value=0.0, step=0.5, value=val_l, format="%.1f")
+        
+        # --- NEW: WORK DESCRIPTION ---
+        work_desc = st.text_area("📝 Work Description / Activity", value=val_desc, placeholder="e.g. Plastering 2nd floor wall, Foundation digging...")
 
         rate_row = None
         try:
@@ -238,11 +244,14 @@ if current_tab == "📝 Daily Entry":
             btn_text = "✅ Save Entry" if mode == "new" else f"🔄 Update"
             
             if st.button(btn_text, type="primary"):
-                if total_est > 0:
+                # We allow 0 cost if they just want to add a description, 
+                # OR we require at least one person. Usually cost > 0 is better check.
+                if total_est > 0 or work_desc.strip() != "":
                     data_payload = {
                         "date": str(entry_date), "site": site, "contractor": contractor,
                         "count_mason": n_mason, "count_helper": n_helper, "count_ladies": n_ladies,
-                        "total_cost": total_est
+                        "total_cost": total_est,
+                        "work_description": work_desc  # Saving the description
                     }
 
                     if mode == "new":
@@ -258,7 +267,7 @@ if current_tab == "📝 Daily Entry":
                         st.success("Updated!")
                     st.rerun()
                 else:
-                    st.error("Enter at least one count.")
+                    st.error("Enter at least one count or a description.")
         else:
             st.error("⚠️ No active rates found.")
 
