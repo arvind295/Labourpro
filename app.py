@@ -7,7 +7,7 @@ from supabase import create_client
 # --- 1. CONFIGURATION ---
 st.set_page_config(page_title="LabourPro", page_icon="🏗️", layout="wide")
 
-# Try to get password from secrets, otherwise default to admin123 (Only for testing!)
+# Try to get password from secrets, otherwise default to admin123
 try:
     ADMIN_PASSWORD = st.secrets["general"]["admin_password"]
 except:
@@ -25,51 +25,42 @@ except Exception:
     st.error("⚠️ Supabase connection failed. Check secrets.toml.")
     st.stop()
 
-# --- 3. CUSTOM STYLING (DARK MODE PROOF - NUCLEAR FIX) ---
+# --- 3. CUSTOM STYLING (FORCE LIGHT THEME VIA VARIABLES) ---
 def apply_custom_styling():
     st.markdown("""
         <style>
-        /* IMPORT FONT */
-        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600&display=swap');
+        /* 1. OVERRIDE STREAMLIT VARIABLES (The Core Fix) */
+        :root {
+            --primary-color: #F39C12;
+            --background-color: #F4F6F9;
+            --secondary-background-color: #FFFFFF; /* This controls Input Box Backgrounds */
+            --text-color: #2C3E50;
+            --font: "sans-serif";
+        }
 
-        /* 1. FORCE LIGHT THEME BACKGROUNDS */
+        /* 2. FORCE BACKGROUNDS */
         .stApp {
-            background-color: #F4F6F9 !important; /* Light Grey Background */
+            background-color: #F4F6F9;
+        }
+
+        /* 3. FORCE INPUT BOXES TO BE WHITE (Specific Override) */
+        div[data-baseweb="input"], div[data-baseweb="base-input"] {
+            background-color: #FFFFFF !important;
+            border: 1px solid #D0D3D4 !important; 
+        }
+        
+        /* 4. FORCE TEXT INSIDE INPUTS TO BE BLACK */
+        input.st-ai, input.st-ah, textarea, input {
             color: #000000 !important;
-            font-family: 'Inter', sans-serif;
-        }
-        
-        /* 2. FORCE TEXT COLORS TO BE DARK (Override Dark Mode Defaults) */
-        h1, h2, h3, h4, h5, h6, p, div, span, li {
-            color: #2C3E50 !important; /* Dark Blue-Grey */
-        }
-        
-        /* 3. FIX "GHOST" LABELS (The text above input boxes) */
-        label[data-testid="stLabel"], .stRadio label, div[data-testid="stMarkdownContainer"] p {
-            color: #2C3E50 !important;
-        }
-        
-        /* 4. FIX INPUT BOXES (Force them White with Black Text) */
-        div[data-baseweb="input"] {
-            background-color: #FFFFFF !important;
-            border: 1px solid #D0D3D4 !important;
-        }
-        input, textarea {
-            color: #000000 !important; /* Force Black Text inside inputs */
-            -webkit-text-fill-color: #000000 !important;
-            caret-color: #000000 !important; /* Black typing cursor */
-        }
-        
-        /* 5. FIX DROPDOWNS (Selectbox) */
-        div[data-baseweb="select"] > div {
-            background-color: #FFFFFF !important;
-            color: #000000 !important;
-        }
-        div[data-baseweb="popover"] {
             background-color: #FFFFFF !important;
         }
         
-        /* 6. CARDS (CONTAINERS) */
+        /* 5. FIX NUMBER INPUT BUTTONS (+/-) */
+        button[kind="secondaryForm"] {
+            background-color: #FFFFFF !important;
+        }
+
+        /* 6. CARDS & CONTAINERS */
         [data-testid="stVerticalBlock"] > [style*="flex-direction: column;"] > [data-testid="stVerticalBlock"] {
             background-color: #FFFFFF;
             padding: 24px;
@@ -77,39 +68,27 @@ def apply_custom_styling():
             box-shadow: 0 4px 12px rgba(0,0,0,0.05);
             border: 1px solid #E0E0E0;
         }
-
-        /* 7. BUTTONS */
+        
+        /* 7. TEXT & HEADINGS */
+        h1, h2, h3, h4, h5, h6, p, label, span, div {
+            color: #2C3E50 !important;
+        }
+        
+        /* 8. BUTTONS */
         div.stButton > button[kind="primary"] {
             background-color: #F39C12 !important;
             color: white !important;
             border: none;
-            border-radius: 8px;
-            font-weight: bold;
-            padding: 0.5rem 1rem;
-            transition: all 0.2s;
         }
-        div.stButton > button[kind="primary"]:hover {
-            background-color: #D68910 !important;
-            box-shadow: 0 4px 8px rgba(243, 156, 18, 0.3);
-        }
-
-        /* SECONDARY BUTTONS */
         div.stButton > button[kind="secondary"] {
             background-color: #ECF0F1 !important;
             color: #2C3E50 !important;
             border: 1px solid #BDC3C7;
-            border-radius: 8px;
         }
         
-        /* 8. METRICS */
-        [data-testid="stMetricValue"] {
-            color: #2980B9 !important; /* Blue numbers */
-        }
-        
-        /* 9. HIDE DEFAULT MENU */
+        /* 9. HIDE MENU */
         #MainMenu {visibility: hidden;}
         footer {visibility: hidden;}
-        
         </style>
     """, unsafe_allow_html=True)
 
@@ -121,7 +100,6 @@ def fetch_data(table):
     return pd.DataFrame(response.data)
 
 def get_billing_start_date(entry_date):
-    """Calculates the Saturday that started the billing week."""
     days_since_saturday = (entry_date.weekday() + 2) % 7
     return entry_date - timedelta(days=days_since_saturday)
 
@@ -151,7 +129,7 @@ def login_process():
     col1, col2, col3 = st.columns([1,2,1])
     with col2:
         st.markdown("<h1 style='text-align: center;'>🏗️ LabourPro</h1>", unsafe_allow_html=True)
-        st.markdown("<p style='text-align: center; color: grey;'>Secure Construction Management System</p>", unsafe_allow_html=True)
+        st.markdown("<p style='text-align: center; color: grey !important;'>Secure Construction Management System</p>", unsafe_allow_html=True)
         
         st.divider()
         
