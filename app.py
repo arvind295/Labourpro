@@ -262,15 +262,77 @@ if current_tab == "📝 Daily Entry":
         else: st.error("No active rate found.")
 
 # ==========================
-# 2. SITE LOGS & BILL
+# 2. SITE LOGS (UPDATED)
 # ==========================
 elif current_tab == "🔍 Site Logs":
     st.subheader("🔍 Site Logs")
-    df = pd.DataFrame(supabase.table("entries").select("*").order("date", desc=True).execute().data)
-    if not df.empty:
-        df["date"] = pd.to_datetime(df["date"]).dt.strftime('%d-%m-%Y')
-        df_show = df[["date", "site", "contractor", "count_mason", "count_helper", "count_ladies", "total_cost", "work_description"]]
-        st.dataframe(df_show, use_container_width=True, hide_index=True)
+    
+    # Fetch Data
+    df_entries = pd.DataFrame(supabase.table("entries").select("*").order("date", desc=True).execute().data)
+    df_users = fetch_data("users")
+
+    if not df_entries.empty:
+        # Convert Date
+        df_entries["date_obj"] = pd.to_datetime(df_entries["date"])
+        df_entries["date_str"] = df_entries["date_obj"].dt.strftime('%d-%m-%Y')
+        df_entries["month_year"] = df_entries["date_obj"].dt.strftime('%B %Y')
+
+        # --- FILTERS ---
+        col_f1, col_f2 = st.columns(2)
+        
+        # Site Filter
+        all_sites = ["All Sites"] + sorted(df_entries["site"].unique().tolist())
+        sel_site = col_f1.selectbox("📍 Filter by Site", all_sites)
+        
+        # Month Filter
+        all_months = ["All Months"] + sorted(df_entries["month_year"].unique().tolist(), reverse=True)
+        sel_month = col_f2.selectbox("📅 Filter by Month", all_months)
+
+        # Apply Filters
+        df_filtered = df_entries.copy()
+        if sel_site != "All Sites":
+            df_filtered = df_filtered[df_filtered["site"] == sel_site]
+        if sel_month != "All Months":
+            df_filtered = df_filtered[df_filtered["month_year"] == sel_month]
+
+        # --- MATCH USERS (Entered By) ---
+        # Logic: Find which user is assigned to this site
+        # Note: If multiple users are assigned to one site (or if assignments changed), this shows the CURRENT assigned user.
+        # Since Supabase doesn't track 'created_by' in entries table by default, we map 'site' -> 'user.assigned_site'
+        
+        def get_user_for_site(site_name):
+            if df_users.empty: return "Unknown"
+            # Find users where assigned_site matches
+            matched = df_users[df_users["assigned_site"] == site_name]
+            if not matched.empty:
+                return ", ".join(matched["name"].tolist()) # Returns "John" or "John, Doe"
+            return "Admin/Unassigned"
+
+        df_filtered["entered_by"] = df_filtered["site"].apply(get_user_for_site)
+
+        # Display Table
+        st.markdown(f"**Showing {len(df_filtered)} entries**")
+        
+        # Renaming for clean display
+        df_display = df_filtered[[
+            "date_str", "site", "entered_by", "contractor", 
+            "count_mason", "count_helper", "count_ladies", 
+            "total_cost", "work_description"
+        ]].rename(columns={
+            "date_str": "Date", 
+            "site": "Site",
+            "entered_by": "Entered By (User)",
+            "contractor": "Contractor",
+            "count_mason": "Mason",
+            "count_helper": "Helper",
+            "count_ladies": "Ladies",
+            "total_cost": "Cost (₹)",
+            "work_description": "Description"
+        })
+
+        st.dataframe(df_display, use_container_width=True, hide_index=True)
+    else:
+        st.info("No logs found.")
 
 elif current_tab == "📊 Weekly Bill":
     st.subheader("📊 Weekly Bill")
@@ -280,7 +342,7 @@ elif current_tab == "📊 Weekly Bill":
         render_weekly_bill(df_e, df_c)
 
 # ==========================
-# 3. ADMIN MGMT (UPDATED SITES)
+# 3. ADMIN MGMT
 # ==========================
 elif current_tab == "📍 Sites":
     st.subheader("📍 Site Management")
@@ -288,60 +350,27 @@ elif current_tab == "📍 Sites":
     st.dataframe(df_sites, hide_index=True, use_container_width=True)
     
     col_add, col_del = st.columns(2)
-    
-    # 1. ADD SITE
     with col_add:
         st.markdown("### ➕ Add Site")
         n = st.text_input("New Site Name")
         if st.button("Add Site", type="primary"):
             supabase.table("sites").insert({"name": n}).execute()
-            st.success(f"Added {n}")
-            st.rerun()
+            st.success(f"Added {n}"); st.rerun()
 
-    # 2. DELETE SITE (LOCKED)
     with col_del:
         st.markdown("### 🗑️ Delete Site")
-        
-        # Lock Logic
-        if "site_backup_unlocked" not in st.session_state:
-            st.session_state["site_backup_unlocked"] = False
-        
-        def unlock_site_delete():
-            st.session_state["site_backup_unlocked"] = True
-
-        # Backup Button
-        backup_data = {
-            "entries": fetch_data("entries").to_dict("records"),
-            "contractors": fetch_data("contractors").to_dict("records"),
-            "sites": fetch_data("sites").to_dict("records"),
-            "users": fetch_data("users").to_dict("records"),
-            "timestamp": str(datetime.now())
-        }
-        
-        st.info("⚠️ Backup required before deletion.")
-        st.download_button(
-            label="1️⃣ Download Backup to Unlock",
-            data=json.dumps(backup_data, indent=4, default=str),
-            file_name=f"Site_Safety_Backup_{date.today()}.json",
-            mime="application/json",
-            on_click=unlock_site_delete
-        )
-        
-        # Delete Interface
+        if "site_backup_unlocked" not in st.session_state: st.session_state["site_backup_unlocked"] = False
+        def unlock_site_delete(): st.session_state["site_backup_unlocked"] = True
+        backup_data = {"entries": fetch_data("entries").to_dict("records"), "contractors": fetch_data("contractors").to_dict("records"), "sites": fetch_data("sites").to_dict("records"), "users": fetch_data("users").to_dict("records"), "timestamp": str(datetime.now())}
+        st.download_button(label="1️⃣ Download Backup to Unlock", data=json.dumps(backup_data, indent=4, default=str), file_name=f"Site_Safety_Backup_{date.today()}.json", mime="application/json", on_click=unlock_site_delete)
         if not df_sites.empty:
             del_site = st.selectbox("Select Site to Delete", df_sites["name"].unique())
-            
-            # Button Disabled until unlocked
             if st.button("2️⃣ Permanently Delete Site", disabled=not st.session_state["site_backup_unlocked"]):
                 try:
                     supabase.table("sites").delete().eq("name", del_site).execute()
-                    st.success(f"Site '{del_site}' deleted.")
-                    st.session_state["site_backup_unlocked"] = False # Relock
-                    st.rerun()
-                except Exception as e:
-                    st.error(f"Error: {e}")
-        else:
-            st.write("No sites to delete.")
+                    st.success(f"Site '{del_site}' deleted."); st.session_state["site_backup_unlocked"] = False; st.rerun()
+                except Exception as e: st.error(f"Error: {e}")
+        else: st.write("No sites to delete.")
 
 
 elif current_tab == "👷 Contractors":
