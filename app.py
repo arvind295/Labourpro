@@ -10,7 +10,7 @@ st.set_page_config(
     page_title="LabourPro", 
     page_icon="🏗️", 
     layout="wide", 
-    initial_sidebar_state="expanded"
+    initial_sidebar_state="collapsed" # Collapsed sidebar looks better on mobile start
 )
 
 # --- 2. CONNECT TO SUPABASE ---
@@ -48,6 +48,11 @@ def apply_custom_styling():
         /* Buttons */
         button[kind="primary"] { background-color: #F39C12 !important; color: #FFFFFF !important; border: none !important; }
         button[disabled] { background-color: #cccccc !important; color: #666666 !important; cursor: not-allowed; }
+        
+        /* Mobile Adjustments */
+        @media only screen and (max-width: 600px) {
+            h1 { font-size: 1.8rem !important; }
+        }
         </style>
     """, unsafe_allow_html=True)
 
@@ -150,48 +155,60 @@ def render_weekly_bill(df_entries, df_contractors):
             st.markdown(html, unsafe_allow_html=True)
         st.divider()
 
-# --- 5. LOGIN (UPDATED for Status Check) ---
+# --- 5. LOGIN (MOBILE OPTIMIZED) ---
 if "logged_in" not in st.session_state:
     st.session_state.update({"logged_in": False, "phone": None, "role": None})
 
 def login_process():
-    col1, col2, col3 = st.columns([1,2,1])
+    # Use layout designed for mobile (more width for the middle column)
+    col1, col2, col3 = st.columns([1, 10, 1])
+    
     with col2:
+        st.markdown("<br>", unsafe_allow_html=True)
         st.markdown("<h1 style='text-align: center; color: black;'>🏗️ LabourPro</h1>", unsafe_allow_html=True)
+        st.markdown("<p style='text-align: center; color: grey;'>Site Entry Portal</p>", unsafe_allow_html=True)
         st.divider()
-        login_type = st.radio("Login Type:", ["User Login", "Admin Login"], horizontal=True)
-        if login_type == "User Login":
-            with st.form("u_log"):
-                ph = st.text_input("Mobile", max_chars=10)
-                if st.form_submit_button("Login", type="primary"):
-                    try:
-                        d = supabase.table("users").select("*").eq("phone", ph).execute().data
-                        if d:
-                            user = d[0]
-                            # CHECK IF RESIGNED
-                            if user.get("status") == "Resigned":
-                                st.error("⚠️ This account has been deactivated (Resigned).")
-                            elif user.get("role") != "admin":
-                                st.session_state.update({"logged_in": True, "phone": user["phone"], "role": "user"})
-                                st.rerun()
-                            else:
-                                st.error("Access Denied")
+        
+        # --- USER LOGIN (Prominent & Default) ---
+        st.subheader("👷 Team Login")
+        with st.form("u_log"):
+            ph = st.text_input("Enter Mobile Number", max_chars=10, placeholder="98765xxxxx")
+            
+            # Full width button for easy thumb tapping
+            if st.form_submit_button("🚀 Login", type="primary", use_container_width=True):
+                try:
+                    d = supabase.table("users").select("*").eq("phone", ph).execute().data
+                    if d:
+                        user = d[0]
+                        if user.get("status") == "Resigned":
+                            st.error("⚠️ Account Deactivated (Resigned).")
+                        elif user.get("role") != "admin":
+                            st.session_state.update({"logged_in": True, "phone": user["phone"], "role": "user"})
+                            st.rerun()
                         else:
-                            st.error("User not found")
-                    except Exception as e: st.error(f"Error: {e}")
-        else:
+                            st.error("Please use Admin Login below.")
+                    else:
+                        st.error("User not found.")
+                except Exception as e: st.error(f"Error: {e}")
+
+        st.markdown("<br><br>", unsafe_allow_html=True)
+
+        # --- ADMIN LOGIN (Hidden in Expander) ---
+        with st.expander("🔐 Admin Login (Click to Expand)"):
             with st.form("a_log"):
-                ph = st.text_input("Admin Mobile")
-                pw = st.text_input("Password", type="password")
-                if st.form_submit_button("Login", type="primary"):
+                ph_admin = st.text_input("Admin Mobile")
+                pw_admin = st.text_input("Password", type="password")
+                
+                # Full width button
+                if st.form_submit_button("Admin Login", use_container_width=True):
                     rp = st.secrets["general"]["admin_password"] if "general" in st.secrets else "admin123"
-                    if pw == rp:
+                    if pw_admin == rp:
                         try:
-                            d = supabase.table("users").select("*").eq("phone", ph).execute().data
+                            d = supabase.table("users").select("*").eq("phone", ph_admin).execute().data
                             if d and d[0].get("role") == "admin":
                                 st.session_state.update({"logged_in": True, "phone": d[0]["phone"], "role": "admin"})
                                 st.rerun()
-                            else: st.error("Not Admin")
+                            else: st.error("Not Admin Account")
                         except: st.error("Error")
                     else: st.error("Wrong Password")
 
@@ -262,7 +279,7 @@ if current_tab == "📝 Daily Entry":
         if rate_row:
             cost = (nm * rate_row['rate_mason']) + (nh * rate_row['rate_helper']) + (nl * rate_row['rate_ladies'])
             st.info(f"💰 Est Cost: ₹{cost:,.2f}")
-            if st.button("Save Entry", type="primary"):
+            if st.button("Save Entry", type="primary", use_container_width=True): # Full width for mobile too
                 load = {"date": str(dt), "site": st_sel, "contractor": con_sel, "count_mason": nm, "count_helper": nh, "count_ladies": nl, "total_cost": cost, "work_description": wdesc}
                 if mode == "new": supabase.table("entries").insert(load).execute()
                 else: supabase.table("entries").update(load).eq("id", exist["id"]).execute()
@@ -388,7 +405,6 @@ elif current_tab == "👥 Users":
     st.subheader("👥 User Management")
     df_users = fetch_data("users")
     
-    # Show user list (Ensure 'status' column is visible if it exists)
     st.dataframe(df_users, use_container_width=True)
     st.divider()
 
@@ -410,28 +426,23 @@ elif current_tab == "👥 Users":
                     assigned_val = None if site_input == "None/All" else site_input
                     existing = supabase.table("users").select("*").eq("phone", phone_input).execute().data
                     if existing:
-                        # Update existing (keep existing status or assume active)
                         supabase.table("users").update({"name": name_input, "role": role_input, "assigned_site": assigned_val}).eq("phone", phone_input).execute()
                         st.success(f"Updated {name_input}")
                     else:
-                        # Create NEW user - Default Status = Active
                         supabase.table("users").insert({
                             "phone": phone_input, 
                             "name": name_input, 
                             "role": role_input, 
                             "assigned_site": assigned_val,
-                            "status": "Active"  # <--- NEW FIELD
+                            "status": "Active"
                         }).execute()
                         st.success(f"Added {name_input}")
                     st.rerun()
 
     with c2:
-        st.markdown("### 🚪 Resign User (Soft Delete)")
-        st.info("This will deactivate the user but keep their data history.")
+        st.markdown("### 🚪 Resign User")
         
         if not df_users.empty:
-            # Only show ACTIVE users in the dropdown to avoid double-resigning
-            # Check if 'status' column exists in dataframe, otherwise assume all active
             if 'status' in df_users.columns:
                 df_active = df_users[(df_users["role"] != "admin") & (df_users["status"] == "Active")]
             else:
@@ -444,7 +455,6 @@ elif current_tab == "👥 Users":
                 if selected_user_str:
                     selected_phone = selected_user_str.split("(")[-1].replace(")", "")
                     if st.button("🚫 Confirm Resignation"):
-                        # UPDATE STATUS INSTEAD OF DELETE
                         supabase.table("users").update({"status": "Resigned"}).eq("phone", selected_phone).execute()
                         st.success("User marked as Resigned."); st.rerun()
             else: st.info("No Active Users to resign.")
