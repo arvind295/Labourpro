@@ -25,42 +25,59 @@ except Exception:
     st.error("⚠️ Supabase connection failed. Check secrets.toml.")
     st.stop()
 
-# --- 3. CUSTOM STYLING (FORCE LIGHT THEME VIA VARIABLES) ---
+# --- 3. CUSTOM STYLING (THE FINAL "ROOT VARIABLE" FIX) ---
 def apply_custom_styling():
     st.markdown("""
         <style>
-        /* 1. OVERRIDE STREAMLIT VARIABLES (The Core Fix) */
+        /* 1. OVERRIDE STREAMLIT'S INTERNAL THEME VARIABLES 
+           This tricks Streamlit into rendering everything in Light Mode 
+           regardless of your computer's settings. */
         :root {
             --primary-color: #F39C12;
             --background-color: #F4F6F9;
-            --secondary-background-color: #FFFFFF; /* This controls Input Box Backgrounds */
+            --secondary-background-color: #FFFFFF; /* Controls Dropdowns & Inputs */
             --text-color: #2C3E50;
             --font: "sans-serif";
         }
 
-        /* 2. FORCE BACKGROUNDS */
+        /* 2. FORCE PAGE BACKGROUND */
         .stApp {
-            background-color: #F4F6F9;
+            background-color: #F4F6F9 !important;
         }
 
-        /* 3. FORCE INPUT BOXES TO BE WHITE (Specific Override) */
-        div[data-baseweb="input"], div[data-baseweb="base-input"] {
+        /* 3. FIX DROPDOWNS (The "Navigate" Box) & INPUTS 
+           This forces the black box in your screenshot to be White. */
+        div[data-baseweb="select"] > div, 
+        div[data-baseweb="base-input"], 
+        div[data-baseweb="input"] {
             background-color: #FFFFFF !important;
-            border: 1px solid #D0D3D4 !important; 
+            color: #000000 !important;
+            border: 1px solid #D0D3D4 !important;
         }
         
-        /* 4. FORCE TEXT INSIDE INPUTS TO BE BLACK */
-        input.st-ai, input.st-ah, textarea, input {
+        /* The Dropdown Popup Menu (The list that opens up) */
+        ul[data-baseweb="menu"], div[data-baseweb="popover"] {
+            background-color: #FFFFFF !important;
+        }
+        
+        /* The Text Inside Dropdown Options */
+        li, span, div[data-baseweb="select"] span {
+            color: #2C3E50 !important;
+        }
+
+        /* 4. FIX TYPING AREAS */
+        input, textarea {
             color: #000000 !important;
             background-color: #FFFFFF !important;
-        }
-        
-        /* 5. FIX NUMBER INPUT BUTTONS (+/-) */
-        button[kind="secondaryForm"] {
-            background-color: #FFFFFF !important;
+            caret-color: #000000 !important; /* The typing cursor */
         }
 
-        /* 6. CARDS & CONTAINERS */
+        /* 5. FIX "GHOST" LABELS (Text above inputs) */
+        label, .stMarkdown p, .stRadio label {
+            color: #2C3E50 !important;
+        }
+
+        /* 6. CARDS (White Containers) */
         [data-testid="stVerticalBlock"] > [style*="flex-direction: column;"] > [data-testid="stVerticalBlock"] {
             background-color: #FFFFFF;
             padding: 24px;
@@ -68,13 +85,8 @@ def apply_custom_styling():
             box-shadow: 0 4px 12px rgba(0,0,0,0.05);
             border: 1px solid #E0E0E0;
         }
-        
-        /* 7. TEXT & HEADINGS */
-        h1, h2, h3, h4, h5, h6, p, label, span, div {
-            color: #2C3E50 !important;
-        }
-        
-        /* 8. BUTTONS */
+
+        /* 7. BUTTONS */
         div.stButton > button[kind="primary"] {
             background-color: #F39C12 !important;
             color: white !important;
@@ -85,8 +97,13 @@ def apply_custom_styling():
             color: #2C3E50 !important;
             border: 1px solid #BDC3C7;
         }
-        
-        /* 9. HIDE MENU */
+        /* Fix the +/- buttons on number inputs */
+        button[kind="secondaryForm"] {
+            background-color: #FFFFFF !important;
+            color: #2C3E50 !important;
+        }
+
+        /* 8. HIDE DEFAULT MENU */
         #MainMenu {visibility: hidden;}
         footer {visibility: hidden;}
         </style>
@@ -100,6 +117,7 @@ def fetch_data(table):
     return pd.DataFrame(response.data)
 
 def get_billing_start_date(entry_date):
+    """Calculates the Saturday that started the billing week."""
     days_since_saturday = (entry_date.weekday() + 2) % 7
     return entry_date - timedelta(days=days_since_saturday)
 
