@@ -25,26 +25,46 @@ except Exception:
     st.error("⚠️ Supabase connection failed. Check secrets.toml.")
     st.stop()
 
-# --- 3. CUSTOM STYLING (THEME & DESIGN) ---
+# --- 3. CUSTOM STYLING (DARK MODE PROOF) ---
 def apply_custom_styling():
     st.markdown("""
         <style>
         /* IMPORT FONT */
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600&display=swap');
 
-        /* MAIN BACKGROUND & TEXT */
+        /* 1. FORCE LIGHT THEME BACKGROUNDS */
         .stApp {
             background-color: #F4F6F9; /* Light Grey Background */
             font-family: 'Inter', sans-serif;
         }
         
-        /* HEADINGS */
-        h1, h2, h3 {
-            color: #2C3E50; /* Dark Blue */
-            font-weight: 600;
+        /* 2. FORCE TEXT COLORS TO BE DARK (Important for Dark Mode users) */
+        h1, h2, h3, h4, h5, h6, p, div, span, label, li {
+            color: #2C3E50 !important; /* Dark Blue-Grey */
+        }
+        
+        /* 3. FIX INPUT FIELDS (Prevent White-on-White text) */
+        div[data-baseweb="input"] {
+            background-color: #FFFFFF !important;
+            border: 1px solid #D0D3D4 !important;
+        }
+        input, textarea, .stDateInput input {
+            color: #000000 !important; /* Force Black Text inside inputs */
+            -webkit-text-fill-color: #000000 !important;
+        }
+        
+        /* Fix the labels above inputs */
+        .stTextInput label, .stNumberInput label, .stSelectbox label, .stDateInput label {
+            color: #4F5B66 !important;
+        }
+        
+        /* Fix Selectbox Text */
+        div[data-baseweb="select"] > div {
+            background-color: #FFFFFF !important;
+            color: #000000 !important;
         }
 
-        /* CARDS (CONTAINERS) */
+        /* 4. CARDS (CONTAINERS) */
         [data-testid="stVerticalBlock"] > [style*="flex-direction: column;"] > [data-testid="stVerticalBlock"] {
             background-color: #FFFFFF;
             padding: 24px;
@@ -53,10 +73,10 @@ def apply_custom_styling():
             border: 1px solid #E0E0E0;
         }
 
-        /* PRIMARY BUTTONS (ORANGE) */
+        /* 5. BUTTONS */
         div.stButton > button[kind="primary"] {
-            background-color: #F39C12;
-            color: white;
+            background-color: #F39C12 !important;
+            color: white !important;
             border: none;
             border-radius: 8px;
             font-weight: bold;
@@ -64,34 +84,24 @@ def apply_custom_styling():
             transition: all 0.2s;
         }
         div.stButton > button[kind="primary"]:hover {
-            background-color: #D68910;
+            background-color: #D68910 !important;
             box-shadow: 0 4px 8px rgba(243, 156, 18, 0.3);
         }
 
-        /* SECONDARY BUTTONS (Standard) */
+        /* SECONDARY BUTTONS */
         div.stButton > button[kind="secondary"] {
-            background-color: #ECF0F1;
-            color: #2C3E50;
+            background-color: #ECF0F1 !important;
+            color: #2C3E50 !important;
             border: 1px solid #BDC3C7;
             border-radius: 8px;
         }
         
-        /* INPUT FIELDS */
-        .stTextInput input, .stNumberInput input, .stSelectbox div[data-testid="stMarkdownContainer"] {
-            color: #2C3E50;
-        }
-        div[data-baseweb="input"] {
-            border-radius: 8px;
-            border: 1px solid #D0D3D4;
-            background-color: #FFFFFF;
-        }
-        
-        /* METRICS */
+        /* 6. METRICS */
         [data-testid="stMetricValue"] {
-            color: #2980B9; /* Blue numbers */
+            color: #2980B9 !important; /* Blue numbers */
         }
         
-        /* HIDE DEFAULT MENU */
+        /* 7. HIDE DEFAULT MENU */
         #MainMenu {visibility: hidden;}
         footer {visibility: hidden;}
         
