@@ -95,7 +95,7 @@ apply_custom_styling()
 
 # --- 4. HELPER FUNCTIONS & PDF ENGINE ---
 def fetch_data(table):
-    response = supabase.table(table).select("*").execute()
+    response = supabase.table(table).select("*", count="exact").range(0, 99999).execute()
     return pd.DataFrame(response.data)
 
 def get_billing_start_date(entry_date):
@@ -420,10 +420,18 @@ elif current_tab == "👥 Users":
         
         if not active.empty:
             sel_u = st.selectbox("Select User to Resign", [f"{r['name']} ({r['phone']})" for _, r in active.iterrows()])
-            if st.button("Confirm Deactivation"):
-                ph_clean = sel_u.split("(")[-1].replace(")", "")
-                supabase.table("users").update({"status": "Resigned"}).eq("phone", ph_clean).execute()
-                st.success("User deactivated"); st.rerun()
+            
+            # --- NEW PASSWORD CHECK ---
+            deact_pass = st.text_input("Enter Security Code to Confirm", type="password", key="deact_pass")
+            
+            if st.button("Confirm Deactivation", type="primary"):
+                if deact_pass == ADMIN_DELETE_CODE:
+                    ph_clean = sel_u.split("(")[-1].replace(")", "")
+                    supabase.table("users").update({"status": "Resigned"}).eq("phone", ph_clean).execute()
+                    st.success("User deactivated")
+                    st.rerun()
+                else:
+                    st.error("⚠️ Wrong Security Code. Deactivation cancelled.")
 
 # TAB 7: ARCHIVE & RECOVERY
 elif current_tab == "📂 Archive & Recovery":
