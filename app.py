@@ -15,8 +15,6 @@ st.set_page_config(
 )
 
 # LOAD SECRETS (Password Management)
-# This looks for passwords in your Secrets file.
-# If running locally without secrets, it defaults to "9512" for safety.
 try:
     if "general" in st.secrets:
         ADMIN_DELETE_CODE = st.secrets["general"].get("admin_delete_code", "9512")
@@ -40,7 +38,7 @@ except Exception:
     st.error("⚠️ Supabase connection failed. Check secrets.toml.")
     st.stop()
 
-# --- 3. CUSTOM STYLING (Full Version) ---
+# --- 3. CUSTOM STYLING ---
 def apply_custom_styling():
     st.markdown("""
         <style>
@@ -58,6 +56,12 @@ def apply_custom_styling():
             color: #000000 !important; 
             border: 1px solid #ccc !important; 
         }
+        /* MultiSelect Tag Styling */
+        span[data-baseweb="tag"] {
+            background-color: #E0E0E0 !important;
+            color: black !important;
+        }
+
         div[data-testid="stDataFrame"], div[data-testid="stTable"] {
             color: #000000 !important; 
             background-color: #FFFFFF !important;
@@ -250,11 +254,26 @@ if current_tab == "📝 Daily Entry":
     if df_sites.empty: st.warning("Admin must add sites.")
     else:
         av_sites = df_sites["name"].unique().tolist()
+        
+        # LOGIC FOR MULTIPLE ASSIGNED SITES
         if st.session_state["role"] != "admin":
             u = supabase.table("users").select("assigned_site").eq("phone", st.session_state["phone"]).single().execute()
-            if u.data and u.data.get("assigned_site") in av_sites: av_sites = [u.data.get("assigned_site")]
-            elif "All" in av_sites: pass
-            else: st.error("No site assigned."); st.stop()
+            if u.data and u.data.get("assigned_site"):
+                # Split the comma-separated string into a list
+                raw_assignments = u.data.get("assigned_site", "")
+                assigned_list = [s.strip() for s in raw_assignments.split(",")]
+                
+                # Filter available sites to only those assigned
+                if "None/All" in assigned_list or "All" in assigned_list:
+                    pass # User keeps all sites
+                else:
+                    av_sites = [s for s in av_sites if s in assigned_list]
+            else:
+                st.error("No site assigned."); st.stop()
+
+        if not av_sites:
+            st.error("You are assigned to sites that no longer exist.")
+            st.stop()
 
         st.subheader("New Work Entry")
         c1, c2, c3 = st.columns(3)
@@ -362,16 +381,35 @@ elif current_tab == "👷 Contractors":
 elif current_tab == "👥 Users":
     st.subheader("Users")
     st.dataframe(fetch_data("users"), use_container_width=True)
+    
+    st.markdown("### ➕ Add / Update User")
     with st.form("u_add"):
-        ph = st.text_input("Phone", max_chars=10); nm = st.text_input("Name"); rl = st.selectbox("Role", ["user", "admin"])
-        sl = ["None/All"] + fetch_data("sites")["name"].tolist(); asite = st.selectbox("Site", sl)
+        c_u1, c_u2 = st.columns(2)
+        ph = c_u1.text_input("Phone (Unique ID)", max_chars=10)
+        nm = c_u2.text_input("Name")
+        
+        c_u3, c_u4 = st.columns(2)
+        rl = c_u3.selectbox("Role", ["user", "admin"])
+        
+        # CHANGED: Multi-select for sites
+        all_sites = fetch_data("sites")["name"].tolist()
+        
+        # Pre-fetching existing user data to populate form would be complex in a simple form,
+        # so this is a simple 'write' form. 
+        # But if updating, we need to handle text better.
+        asites = c_u4.multiselect("Assigned Sites", all_sites)
+
         if st.form_submit_button("Save User"):
-            av = None if asite == "None/All" else asite
+            # Join list into comma-separated string for database
+            site_str = ", ".join(asites) if asites else "None/All"
+            
             if supabase.table("users").select("*").eq("phone", ph).execute().data:
-                supabase.table("users").update({"name": nm, "role": rl, "assigned_site": av}).eq("phone", ph).execute()
+                # Update
+                supabase.table("users").update({"name": nm, "role": rl, "assigned_site": site_str}).eq("phone", ph).execute()
             else:
-                supabase.table("users").insert({"phone": ph, "name": nm, "role": rl, "assigned_site": av, "status": "Active"}).execute()
-            st.rerun()
+                # Insert
+                supabase.table("users").insert({"phone": ph, "name": nm, "role": rl, "assigned_site": site_str, "status": "Active"}).execute()
+            st.success("User Saved!"); st.rerun()
     
     st.divider()
     st.markdown("### 🚪 Deactivate User")
@@ -387,7 +425,7 @@ elif current_tab == "👥 Users":
                 supabase.table("users").update({"status": "Resigned"}).eq("phone", ph_clean).execute()
                 st.success("User deactivated"); st.rerun()
 
-# TAB 7: ARCHIVE & RECOVERY (RESTORED FEATURES)
+# TAB 7: ARCHIVE & RECOVERY
 elif current_tab == "📂 Archive & Recovery":
     st.subheader("Recovery Zone")
     t1, t2, t3 = st.tabs(["Reset Data", "View Archives (Offline)", "Restore Data"])
@@ -409,7 +447,7 @@ elif current_tab == "📂 Archive & Recovery":
                 supabase.table("entries").delete().neq("id", 0).execute(); st.success("Reset Complete"); st.session_state["reset_ul"] = False
             else: st.error("Wrong Code or Text")
 
-    # SUB-TAB 2: VIEW ARCHIVES (THE FEATURE YOU WANTED BACK)
+    # SUB-TAB 2: VIEW ARCHIVES
     with t2:
         st.markdown("### 📜 View Old Data (No Restore)")
         f_view = st.file_uploader("Upload JSON to View", type=["json"], key="view_upload")
