@@ -380,23 +380,24 @@ if current_tab == "📝 Daily Entry":
                     st.success("Saved"); st.rerun()
             else: st.error("No rate found for this date.")
 
-# --- PASTE THIS NEW SECTION ---
-    st.divider()
-    st.subheader("📋 Recent Entries (Last 50)")
+# --- PASTE THIS NEW SECTION (ADMIN ONLY VERSION) ---
+    # Only show this table if the user is an ADMIN
+    if st.session_state["role"] == "admin": 
+        st.divider()
+        st.subheader("📋 Recent Entries (Last 50)")
 
-    try:
-        # OPTIMIZATION: Only fetch the last 50 entries to prevent crashing
-        response = supabase.table("entries").select("*").order("date", desc=True).limit(50).execute()
-        
-        if response.data:
-            df_recent = pd.DataFrame(response.data)
-            # Show specific columns to keep it clean
-            st.dataframe(df_recent[["date", "site", "contractor", "total_cost", "work_description"]], use_container_width=True)
-        else:
-            st.info("No entries found yet.")
+        try:
+            # OPTIMIZATION: Only fetch the last 50 entries
+            response = supabase.table("entries").select("*").order("date", desc=True).limit(50).execute()
             
-    except Exception as e:
-        st.error(f"Could not load recent table: {e}")
+            if response.data:
+                df_recent = pd.DataFrame(response.data)
+                # Show key columns
+                st.dataframe(df_recent[["date", "site", "contractor", "total_cost", "work_description"]], use_container_width=True)
+            else:
+                st.info("No entries found yet.")
+        except Exception as e:
+            st.error(f"Could not load recent table: {e}")
 
 # TAB 2: SITE LOGS
 elif current_tab == "🔍 Site Logs":
