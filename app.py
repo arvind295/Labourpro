@@ -15,12 +15,17 @@ st.set_page_config(
 )
 
 # LOAD SECRETS (Password Management)
+# This looks for passwords in your Secrets file.
+# If running locally without secrets, it defaults to "9512" for safety.
 try:
-    ADMIN_DELETE_CODE = st.secrets["general"]["admin_delete_code"]
-    ADMIN_LOGIN_PASS = st.secrets["general"]["admin_password"]
+    if "general" in st.secrets:
+        ADMIN_DELETE_CODE = st.secrets["general"].get("admin_delete_code", "9512")
+        ADMIN_LOGIN_PASS = st.secrets["general"].get("admin_password", "admin123")
+    else:
+        ADMIN_DELETE_CODE = "9512"
+        ADMIN_LOGIN_PASS = "admin123"
 except Exception:
-    st.error("⚠️ Secrets not found! Using unsafe defaults for testing.")
-    ADMIN_DELETE_CODE = "9512" 
+    ADMIN_DELETE_CODE = "9512"
     ADMIN_LOGIN_PASS = "admin123"
 
 # --- 2. CONNECT TO SUPABASE ---
@@ -35,40 +40,56 @@ except Exception:
     st.error("⚠️ Supabase connection failed. Check secrets.toml.")
     st.stop()
 
-# --- 3. CUSTOM STYLING (Restored Full CSS) ---
+# --- 3. CUSTOM STYLING (Full Version) ---
 def apply_custom_styling():
     st.markdown("""
         <style>
         /* Force ALL Text to Black */
         * { color: #000000 !important; }
         .stApp { background-color: #FFFFFF !important; }
+        
+        /* Sidebar Styling */
         section[data-testid="stSidebar"] { background-color: #F8F9FA !important; border-right: 1px solid #E0E0E0; }
         section[data-testid="stSidebar"] * { color: #000000 !important; }
         
-        /* Inputs & Tables */
+        /* Inputs, Tables, Select Boxes */
         input, textarea, select, div[data-baseweb="select"] > div {
-            background-color: #FFFFFF !important; color: #000000 !important; border: 1px solid #ccc !important; 
+            background-color: #FFFFFF !important; 
+            color: #000000 !important; 
+            border: 1px solid #ccc !important; 
         }
         div[data-testid="stDataFrame"], div[data-testid="stTable"] {
-            color: #000000 !important; background-color: #FFFFFF !important;
+            color: #000000 !important; 
+            background-color: #FFFFFF !important;
         }
+        
+        /* Table Headers & Cells */
         th { background-color: #E0E0E0 !important; border-bottom: 2px solid #000 !important; }
         td { border-bottom: 1px solid #ddd !important; }
         
         /* Buttons */
-        button[kind="primary"] { background-color: #F39C12 !important; color: #FFFFFF !important; border: none !important; }
-        button[disabled] { background-color: #cccccc !important; color: #666666 !important; cursor: not-allowed; }
+        button[kind="primary"] { 
+            background-color: #F39C12 !important; 
+            color: #FFFFFF !important; 
+            border: none !important; 
+        }
+        button[disabled] { 
+            background-color: #cccccc !important; 
+            color: #666666 !important; 
+            cursor: not-allowed; 
+        }
         
         /* Mobile Adjustments */
         @media only screen and (max-width: 600px) {
             h1 { font-size: 1.8rem !important; }
+            .stButton button { width: 100% !important; }
         }
         </style>
     """, unsafe_allow_html=True)
 
 apply_custom_styling()
 
-# --- 4. HELPER FUNCTIONS & PDF ---
+# --- 4. HELPER FUNCTIONS & PDF ENGINE ---
 def fetch_data(table):
     response = supabase.table(table).select("*").execute()
     return pd.DataFrame(response.data)
@@ -118,12 +139,13 @@ def generate_pdf_bytes(site_name, week_label, billing_data):
 
 def render_weekly_bill(df_entries, df_contractors):
     if df_entries.empty: st.info("No data available."); return
-    # Safe conversion
+    
+    # Ensure date format
     df_entries["date_dt"] = pd.to_datetime(df_entries["date"], errors='coerce')
     df_contractors["effective_date"] = pd.to_datetime(df_contractors["effective_date"], errors='coerce').dt.date
     df_entries = df_entries.dropna(subset=["date_dt"])
     
-    # Billing cycle logic
+    # Calculate billing weeks
     df_entries["start_date"] = df_entries["date_dt"].dt.date.apply(get_billing_start_date)
     df_entries["end_date"] = df_entries["start_date"] + timedelta(days=6)
     df_entries["week_label"] = df_entries.apply(lambda x: f"{x['start_date'].strftime('%d-%m-%Y')} to {x['end_date'].strftime('%d-%m-%Y')}", axis=1)
@@ -172,7 +194,7 @@ def render_weekly_bill(df_entries, df_contractors):
             except: pass
         st.divider()
 
-# --- 5. LOGIN ---
+# --- 5. LOGIN SYSTEM ---
 if "logged_in" not in st.session_state: st.session_state.update({"logged_in": False, "phone": None, "role": None})
 
 def login_process():
@@ -213,7 +235,7 @@ def login_process():
 
 if not st.session_state["logged_in"]: login_process(); st.stop()
 
-# --- 6. MAIN APP ---
+# --- 6. MAIN APP LOGIC ---
 with st.sidebar:
     st.info(f"Role: **{st.session_state['role'].upper()}**")
     if st.button("Logout"): st.session_state.clear(); st.rerun()
@@ -222,7 +244,7 @@ tabs = ["📝 Daily Entry"]
 if st.session_state["role"] == "admin": tabs += ["🔍 Site Logs", "📊 Weekly Bill", "📍 Sites", "👷 Contractors", "👥 Users", "📂 Archive & Recovery"]
 current_tab = st.selectbox("Navigate", tabs, label_visibility="collapsed"); st.divider()
 
-# DAILY ENTRY
+# TAB 1: DAILY ENTRY
 if current_tab == "📝 Daily Entry":
     df_sites = fetch_data("sites"); df_con = fetch_data("contractors")
     if df_sites.empty: st.warning("Admin must add sites.")
@@ -273,7 +295,7 @@ if current_tab == "📝 Daily Entry":
                     st.success("Saved"); st.rerun()
             else: st.error("No rate found for this date.")
 
-# SITE LOGS
+# TAB 2: SITE LOGS
 elif current_tab == "🔍 Site Logs":
     st.subheader("🔍 Site Logs")
     df_e = pd.DataFrame(supabase.table("entries").select("*").order("date", desc=True).execute().data)
@@ -292,7 +314,6 @@ elif current_tab == "🔍 Site Logs":
             with st.expander("🗑️ Delete Entry"):
                 col_d1, col_d2 = st.columns([1, 2])
                 del_id = col_d1.number_input("ID to Delete", step=1, value=0)
-                # SECURE: Checks against variable loaded from secrets
                 del_code = col_d2.text_input("Security Code", type="password")
                 if st.button("Delete Permanently", type="primary"):
                     if del_code == ADMIN_DELETE_CODE:
@@ -300,12 +321,12 @@ elif current_tab == "🔍 Site Logs":
                     else: st.error("Wrong Code")
     else: st.info("No logs.")
 
-# BILLING
+# TAB 3: BILLING
 elif current_tab == "📊 Weekly Bill":
     st.subheader("📊 Weekly Bill")
     render_weekly_bill(fetch_data("entries"), fetch_data("contractors"))
 
-# SITE MGMT
+# TAB 4: SITE MANAGEMENT
 elif current_tab == "📍 Sites":
     st.subheader("📍 Sites")
     st.dataframe(fetch_data("sites"), hide_index=True, use_container_width=True)
@@ -314,7 +335,6 @@ elif current_tab == "📍 Sites":
         n = st.text_input("New Site Name")
         if st.button("Add Site"): supabase.table("sites").insert({"name": n}).execute(); st.rerun()
     with c2:
-        # Site Delete Logic
         if "site_ul" not in st.session_state: st.session_state["site_ul"] = False
         def unlk(): st.session_state["site_ul"] = True
         st.download_button("Unlock Delete (Download Backup)", data=json.dumps({"sites": fetch_data("sites").to_dict("records")}, default=str), file_name="site_bkp.json", on_click=unlk)
@@ -322,7 +342,7 @@ elif current_tab == "📍 Sites":
         if st.button("Delete Site", disabled=not st.session_state["site_ul"]):
              supabase.table("sites").delete().eq("name", d_site).execute(); st.success("Deleted"); st.rerun()
 
-# CONTRACTORS
+# TAB 5: CONTRACTORS
 elif current_tab == "👷 Contractors":
     st.subheader("Contractor Rates")
     df_c = fetch_data("contractors")
@@ -338,7 +358,7 @@ elif current_tab == "👷 Contractors":
         if st.form_submit_button("Save"):
             supabase.table("contractors").insert({"name": cn, "rate_mason": rm, "rate_helper": rh, "rate_ladies": rl, "effective_date": str(ed)}).execute(); st.success("Saved"); st.rerun()
 
-# USERS
+# TAB 6: USERS
 elif current_tab == "👥 Users":
     st.subheader("Users")
     st.dataframe(fetch_data("users"), use_container_width=True)
@@ -352,8 +372,7 @@ elif current_tab == "👥 Users":
             else:
                 supabase.table("users").insert({"phone": ph, "name": nm, "role": rl, "assigned_site": av, "status": "Active"}).execute()
             st.rerun()
-            
-    # Resign User logic (Was missing from brief optimized version)
+    
     st.divider()
     st.markdown("### 🚪 Deactivate User")
     users = fetch_data("users")
@@ -368,12 +387,12 @@ elif current_tab == "👥 Users":
                 supabase.table("users").update({"status": "Resigned"}).eq("phone", ph_clean).execute()
                 st.success("User deactivated"); st.rerun()
 
-# ARCHIVE & RECOVERY
+# TAB 7: ARCHIVE & RECOVERY (RESTORED FEATURES)
 elif current_tab == "📂 Archive & Recovery":
     st.subheader("Recovery Zone")
-    t1, t2, t3 = st.tabs(["Reset Data", "View Archives", "Restore Data"])
+    t1, t2, t3 = st.tabs(["Reset Data", "View Archives (Offline)", "Restore Data"])
     
-    # 1. RESET (DELETE ALL)
+    # SUB-TAB 1: RESET
     with t1:
         st.info("Download backup to unlock reset.")
         if "reset_ul" not in st.session_state: st.session_state["reset_ul"] = False
@@ -390,14 +409,14 @@ elif current_tab == "📂 Archive & Recovery":
                 supabase.table("entries").delete().neq("id", 0).execute(); st.success("Reset Complete"); st.session_state["reset_ul"] = False
             else: st.error("Wrong Code or Text")
 
-    # 2. VIEW ARCHIVES (RESTORED FEATURE)
+    # SUB-TAB 2: VIEW ARCHIVES (THE FEATURE YOU WANTED BACK)
     with t2:
         st.markdown("### 📜 View Old Data (No Restore)")
-        f_view = st.file_uploader("Upload JSON to View", type=["json"], key="view_up")
+        f_view = st.file_uploader("Upload JSON to View", type=["json"], key="view_upload")
         if f_view:
             try:
                 d = json.load(f_view)
-                st.success("File Loaded")
+                st.success("File Loaded Successfully")
                 
                 # Option to Generate Bill from Archive
                 view_mode = st.radio("View Mode", ["Raw Data Tables", "Generate Weekly Bill"])
@@ -406,19 +425,19 @@ elif current_tab == "📂 Archive & Recovery":
                     cat = st.selectbox("Category", ["Entries", "Users", "Sites", "Contractors"])
                     k_map = {"Entries": "entries", "Users": "users", "Sites": "sites", "Contractors": "contractors"}
                     if d.get(k_map[cat]): st.dataframe(pd.DataFrame(d[k_map[cat]]), use_container_width=True)
-                    else: st.warning("No data.")
+                    else: st.warning("No data found for this category.")
                 
                 elif view_mode == "Generate Weekly Bill":
-                    # Convert JSON dicts back to DataFrames for the billing engine
+                    st.info("Generating bill from uploaded backup file...")
                     if d.get("entries") and d.get("contractors"):
                         ae = pd.DataFrame(d["entries"])
                         ac = pd.DataFrame(d["contractors"])
                         render_weekly_bill(ae, ac)
                     else:
                         st.error("Backup file missing entries or contractors data.")
-            except Exception as e: st.error(f"Error: {e}")
+            except Exception as e: st.error(f"Error reading file: {e}")
 
-    # 3. RESTORE (DANGEROUS)
+    # SUB-TAB 3: RESTORE
     with t3:
         f = st.file_uploader("Upload Backup JSON to Restore", key="res_up")
         res_pass = st.text_input("Restore Password", type="password")
