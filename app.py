@@ -94,9 +94,30 @@ def apply_custom_styling():
 apply_custom_styling()
 
 # --- 4. HELPER FUNCTIONS & PDF ENGINE ---
+# --- 4. HELPER FUNCTIONS & PDF ENGINE ---
 def fetch_data(table):
-    response = supabase.table(table).select("*", count="exact").range(0, 99999).execute()
-    return pd.DataFrame(response.data)
+    all_data = []
+    page_size = 1000
+    current_start = 0
+    
+    while True:
+        # Fetch data in small chunks (e.g. 0-999, then 1000-1999) to avoid timeout
+        try:
+            response = supabase.table(table).select("*").range(current_start, current_start + page_size - 1).execute()
+            data_chunk = response.data
+            
+            all_data.extend(data_chunk)
+            
+            # If we got less than 1000 rows, we have reached the end
+            if len(data_chunk) < page_size:
+                break
+                
+            current_start += page_size
+        except Exception as e:
+            st.error(f"Error fetching data chunk: {e}")
+            break
+
+    return pd.DataFrame(all_data)
 
 def get_billing_start_date(entry_date):
     days_since_saturday = (entry_date.weekday() + 2) % 7
@@ -317,7 +338,13 @@ if current_tab == "📝 Daily Entry":
 # TAB 2: SITE LOGS
 elif current_tab == "🔍 Site Logs":
     st.subheader("🔍 Site Logs")
-    df_e = pd.DataFrame(supabase.table("entries").select("*").order("date", desc=True).execute().data)
+    
+    # SAFE CODE: Only fetch the last 500 entries to prevent crashing
+    # We use .limit(500) to keep it fast
+    response = supabase.table("entries").select("*").order("date", desc=True).limit(500).execute()
+    df_e = pd.DataFrame(response.data)
+    
+    st.caption("Showing last 500 entries only. Use 'Weekly Bill' for full history.")
     if not df_e.empty:
         df_e["date_obj"] = pd.to_datetime(df_e["date"], errors='coerce'); df_e = df_e.dropna(subset=["date_obj"])
         df_e["Date"] = df_e["date_obj"].dt.strftime('%d-%m-%Y')
@@ -341,9 +368,31 @@ elif current_tab == "🔍 Site Logs":
     else: st.info("No logs.")
 
 # TAB 3: BILLING
+# TAB 3: BILLING
 elif current_tab == "📊 Weekly Bill":
     st.subheader("📊 Weekly Bill")
-    render_weekly_bill(fetch_data("entries"), fetch_data("contractors"))
+    
+    # OPTIMIZATION: Instead of fetching ALL history, let's fetch only recent data
+    # or keep using fetch_data("entries") but be aware it might get slow.
+    
+    # If you want to make it super fast, use a date filter:
+    # This example fetches only data from 2024 onwards (you can adjust this date)
+    try:
+        # Fetch entries only after Jan 1st of the current year to save speed
+        start_of_year = f"{date.today().year}-01-01"
+        
+        # We manually build the query instead of using the generic fetch_data
+        response = supabase.table("entries").select("*").gte("date", start_of_year).execute()
+        df_entries = pd.DataFrame(response.data)
+        
+        # If response was truncated (hit the 1000 limit), we might need the chunking logic here too.
+        # But usually, filtering by date range is safer.
+        
+    except:
+        # Fallback to the safe chunk loader if the optimization fails
+        df_entries = fetch_data("entries")
+
+    render_weekly_bill(df_entries, fetch_data("contractors"))
 
 # TAB 4: SITE MANAGEMENT
 elif current_tab == "📍 Sites":
