@@ -4,6 +4,7 @@ import json
 from datetime import datetime, date, timedelta
 from supabase import create_client
 import io
+from fpdf import FPDF
 
 # --- 1. CONFIGURATION ---
 st.set_page_config(
@@ -67,7 +68,74 @@ def get_billing_start_date(entry_date):
     days_since_saturday = (entry_date.weekday() + 2) % 7
     return entry_date - timedelta(days=days_since_saturday)
 
-# Reusable Function to Generate the HTML Bill
+# --- PDF GENERATOR CLASS ---
+class PDFBill(FPDF):
+    def header(self):
+        self.set_font('Arial', 'B', 16)
+        self.cell(0, 10, 'Labour Payment Bill', 0, 1, 'C')
+        self.ln(5)
+
+    def footer(self):
+        self.set_y(-15)
+        self.set_font('Arial', 'I', 8)
+        self.cell(0, 10, f'Page {self.page_no()}', 0, 0, 'C')
+
+def generate_pdf_bytes(site_name, week_label, billing_data):
+    pdf = PDFBill()
+    pdf.add_page()
+    
+    # Title Section
+    pdf.set_font("Arial", 'B', 12)
+    pdf.cell(0, 10, f"Site: {site_name}", 0, 1, 'L')
+    pdf.cell(0, 10, f"Week: {week_label}", 0, 1, 'L')
+    pdf.ln(5)
+
+    # Loop through contractors
+    for con in billing_data:
+        pdf.set_fill_color(220, 220, 220)
+        pdf.set_font("Arial", 'B', 12)
+        pdf.cell(0, 10, f"Contractor: {con['name']}", 0, 1, 'L', fill=True)
+        
+        # Table Header
+        pdf.set_font("Arial", 'B', 10)
+        pdf.cell(30, 8, "Date", 1)
+        pdf.cell(20, 8, "Mason", 1)
+        pdf.cell(20, 8, "Helper", 1)
+        pdf.cell(20, 8, "Ladies", 1)
+        pdf.ln()
+        
+        # Table Rows
+        pdf.set_font("Arial", '', 10)
+        for row in con['rows']:
+            pdf.cell(30, 8, str(row['Date']), 1)
+            pdf.cell(20, 8, str(row['Mason']), 1)
+            pdf.cell(20, 8, str(row['Helper']), 1)
+            pdf.cell(20, 8, str(row['Ladies']), 1)
+            pdf.ln()
+
+        # Summary for this contractor
+        pdf.set_font("Arial", 'B', 10)
+        pdf.cell(30, 8, "Total Shifts", 1)
+        pdf.cell(20, 8, str(con['totals']['m']), 1)
+        pdf.cell(20, 8, str(con['totals']['h']), 1)
+        pdf.cell(20, 8, str(con['totals']['l']), 1)
+        pdf.ln()
+
+        # Rates
+        pdf.cell(30, 8, "Rate", 1)
+        pdf.cell(20, 8, str(int(con['rates']['rm'])), 1)
+        pdf.cell(20, 8, str(int(con['rates']['rh'])), 1)
+        pdf.cell(20, 8, str(int(con['rates']['rl'])), 1)
+        pdf.ln()
+
+        # Final Total
+        pdf.set_font("Arial", 'B', 12)
+        pdf.cell(90, 10, f"Total Amount: Rs. {con['totals']['amt']:,.2f}", 1, 0, 'R')
+        pdf.ln(15)
+
+    return pdf.output(dest='S').encode('latin-1')
+
+# Reusable Function to Generate the HTML Bill & Prepare PDF Data
 def render_weekly_bill(df_entries, df_contractors):
     if df_entries.empty:
         st.info("No data available for this period.")
@@ -93,10 +161,14 @@ def render_weekly_bill(df_entries, df_contractors):
     sel_week = st.selectbox("Select Week", weeks)
     df_week = df_entries[df_entries["week_label"] == sel_week].copy()
     
+    # --- SITE LOOP ---
     for site_name in df_week["site"].unique():
         st.markdown(f"### 📍 Site: {site_name}")
         df_site = df_week[df_week["site"] == site_name]
         
+        # Data container for PDF
+        pdf_site_data = []
+
         for con_name in df_site["contractor"].unique():
             st.markdown(f"#### 👷 Contractor: {con_name}")
             df_con_entries = df_site[df_site["contractor"] == con_name].sort_values("date")
@@ -127,46 +199,70 @@ def render_weekly_bill(df_entries, df_contractors):
                     curr = rates.iloc[0]
                     rm, rh, rl = curr["rate_mason"], curr["rate_helper"], curr["rate_ladies"]
             
-            # --- HTML TABLE ---
+            # Store Data for PDF
+            pdf_site_data.append({
+                "name": con_name,
+                "rows": rows,
+                "totals": {"m": tm, "h": th, "l": tl, "amt": tamt},
+                "rates": {"rm": rm, "rh": rh, "rl": rl}
+            })
+
+            # --- HTML TABLE DISPLAY ---
             html = f"""
-<table style="width:100%; border-collapse: collapse; color: black; background: white; font-size: 14px;">
-<tr style="background: #e0e0e0; border-bottom: 2px solid black;">
-<th style="padding: 8px; border: 1px solid #ccc;">Date</th>
-<th style="padding: 8px; border: 1px solid #ccc;">Mason</th>
-<th style="padding: 8px; border: 1px solid #ccc;">Helper</th>
-<th style="padding: 8px; border: 1px solid #ccc;">Ladies</th>
-</tr>
-"""
+            <table style="width:100%; border-collapse: collapse; color: black; background: white; font-size: 14px;">
+            <tr style="background: #e0e0e0; border-bottom: 2px solid black;">
+            <th style="padding: 8px; border: 1px solid #ccc;">Date</th>
+            <th style="padding: 8px; border: 1px solid #ccc;">Mason</th>
+            <th style="padding: 8px; border: 1px solid #ccc;">Helper</th>
+            <th style="padding: 8px; border: 1px solid #ccc;">Ladies</th>
+            </tr>
+            """
             for r in rows:
                 html += f"""
-<tr>
-<td style="padding: 8px; border: 1px solid #ccc;">{r['Date']}</td>
-<td style="padding: 8px; border: 1px solid #ccc;">{r['Mason']}</td>
-<td style="padding: 8px; border: 1px solid #ccc;">{r['Helper']}</td>
-<td style="padding: 8px; border: 1px solid #ccc;">{r['Ladies']}</td>
-</tr>
-"""
+                <tr>
+                <td style="padding: 8px; border: 1px solid #ccc;">{r['Date']}</td>
+                <td style="padding: 8px; border: 1px solid #ccc;">{r['Mason']}</td>
+                <td style="padding: 8px; border: 1px solid #ccc;">{r['Helper']}</td>
+                <td style="padding: 8px; border: 1px solid #ccc;">{r['Ladies']}</td>
+                </tr>
+                """
             html += f"""
-<tr style="font-weight: bold; background: #f9f9f9;">
-<td style="padding: 8px; border: 1px solid #ccc;">Total Labour</td>
-<td style="padding: 8px; border: 1px solid #ccc;">{tm}</td>
-<td style="padding: 8px; border: 1px solid #ccc;">{th}</td>
-<td style="padding: 8px; border: 1px solid #ccc;">{tl}</td>
-</tr>
-<tr style="font-weight: bold;">
-<td style="padding: 8px; border: 1px solid #ccc;">Rate (Approx)</td>
-<td style="padding: 8px; border: 1px solid #ccc;">₹{rm:,.0f}</td>
-<td style="padding: 8px; border: 1px solid #ccc;">₹{rh:,.0f}</td>
-<td style="padding: 8px; border: 1px solid #ccc;">₹{rl:,.0f}</td>
-</tr>
-<tr style="font-weight: bold; background: #e0e0e0; font-size: 1.1em;">
-<td style="padding: 8px; border: 1px solid #ccc;">Total Amount</td>
-<td colspan="3" style="padding: 8px; border: 1px solid #ccc; text-align: center;">₹{tamt:,.0f}</td>
-</tr>
-</table>
-<br>
-"""
+            <tr style="font-weight: bold; background: #f9f9f9;">
+            <td style="padding: 8px; border: 1px solid #ccc;">Total Labour</td>
+            <td style="padding: 8px; border: 1px solid #ccc;">{tm}</td>
+            <td style="padding: 8px; border: 1px solid #ccc;">{th}</td>
+            <td style="padding: 8px; border: 1px solid #ccc;">{tl}</td>
+            </tr>
+            <tr style="font-weight: bold;">
+            <td style="padding: 8px; border: 1px solid #ccc;">Rate (Approx)</td>
+            <td style="padding: 8px; border: 1px solid #ccc;">₹{rm:,.0f}</td>
+            <td style="padding: 8px; border: 1px solid #ccc;">₹{rh:,.0f}</td>
+            <td style="padding: 8px; border: 1px solid #ccc;">₹{rl:,.0f}</td>
+            </tr>
+            <tr style="font-weight: bold; background: #e0e0e0; font-size: 1.1em;">
+            <td style="padding: 8px; border: 1px solid #ccc;">Total Amount</td>
+            <td colspan="3" style="padding: 8px; border: 1px solid #ccc; text-align: center;">₹{tamt:,.0f}</td>
+            </tr>
+            </table>
+            <br>
+            """
             st.markdown(html, unsafe_allow_html=True)
+        
+        # --- GENERATE PDF BUTTON FOR THIS SITE ---
+        if pdf_site_data:
+            try:
+                pdf_bytes = generate_pdf_bytes(site_name, sel_week, pdf_site_data)
+                file_name = f"Bill_{site_name}_{sel_week}.pdf".replace(" ", "_")
+                st.download_button(
+                    label=f"⬇️ Download PDF for {site_name}",
+                    data=pdf_bytes,
+                    file_name=file_name,
+                    mime="application/pdf",
+                    key=f"pdf_btn_{site_name}"
+                )
+            except Exception as e:
+                st.error(f"PDF Error: {e}")
+        
         st.divider()
 
 # --- 5. LOGIN (MOBILE OPTIMIZED) ---
@@ -239,7 +335,7 @@ current_tab = st.selectbox("Navigate", tabs, label_visibility="collapsed")
 st.divider()
 
 # ==========================
-# 1. DAILY ENTRY
+# 1. DAILY ENTRY (SECURE: HIDDEN COSTS FOR USERS)
 # ==========================
 if current_tab == "📝 Daily Entry":
     df_sites = fetch_data("sites")
@@ -294,7 +390,11 @@ if current_tab == "📝 Daily Entry":
 
         if rate_row:
             cost = (nm * rate_row['rate_mason']) + (nh * rate_row['rate_helper']) + (nl * rate_row['rate_ladies'])
-            st.info(f"💰 Est Cost: ₹{cost:,.2f}")
+            
+            # --- SECURITY FIX: HIDE COST FROM NON-ADMINS ---
+            if st.session_state["role"] == "admin":
+                st.info(f"💰 Est Cost: ₹{cost:,.2f}")
+            
             if st.button("Save Entry", type="primary", use_container_width=True): 
                 load = {"date": str(dt), "site": st_sel, "contractor": con_sel, "count_mason": nm, "count_helper": nh, "count_ladies": nl, "total_cost": cost, "work_description": wdesc}
                 if mode == "new": supabase.table("entries").insert(load).execute()
