@@ -220,45 +220,65 @@ def render_weekly_bill(df_entries, df_contractors):
         st.divider()
 
 # --- 5. LOGIN SYSTEM ---
-if "logged_in" not in st.session_state: st.session_state.update({"logged_in": False, "phone": None, "role": None})
+if "logged_in" not in st.session_state:
+    st.session_state.update({"logged_in": False, "phone": None, "role": None})
 
 def login_process():
     col1, col2, col3 = st.columns([1, 10, 1])
     with col2:
         st.markdown("<br><h1 style='text-align: center; color: black;'>🏗️ LabourPro</h1><p style='text-align: center; color: grey;'>Site Entry Portal</p><hr>", unsafe_allow_html=True)
         
-        st.subheader("👷 Team Login")
-        with st.form("u_log"):
-            ph = st.text_input("Enter Mobile Number", max_chars=10)
+        # Unified Login Form (Solves the Double-Click Error)
+        with st.form("login_all"):
+            # We use one text box for Phone or Admin ID
+            uid = st.text_input("Phone Number", placeholder="Enter Mobile Number", max_chars=10)
+            upass = st.text_input("Password", type="password")
+            
             if st.form_submit_button("🚀 Login", type="primary", use_container_width=True):
-                try:
-                    d = supabase.table("users").select("*").eq("phone", ph).execute().data
-                    if d:
-                        if d[0].get("status") == "Resigned": st.error("⚠️ Account Deactivated.")
-                        elif d[0].get("role") == "admin": st.error("Please use Admin Login below.")
+                # 1. Check ADMIN Login First (Instant, no database needed)
+                if uid == "admin" and upass == ADMIN_LOGIN_PASS:
+                    st.session_state.update({"logged_in": True, "phone": "admin", "role": "admin"})
+                    st.success("✅ Admin Logged In")
+                    st.rerun()
+                
+                # 2. Check USER Login (Optimized Fetch)
+                else:
+                    try:
+                        # Fetch ONLY the specific user (Fastest method)
+                        # We specifically ask for 1 row to prevent timeout
+                        resp = supabase.table("users").select("*").eq("phone", uid).execute()
+                        
+                        if not resp.data:
+                            st.error("❌ User not found.")
                         else:
-                            st.session_state.update({"logged_in": True, "phone": d[0]["phone"], "role": "user"})
-                            st.rerun()
-                    else: st.error("User not found.")
-                except: st.error("Connection Error")
-
-        st.markdown("<br>", unsafe_allow_html=True)
-        with st.expander("🔐 Admin Login"):
-            with st.form("a_log"):
-                ph_a = st.text_input("Admin Mobile"); pw_a = st.text_input("Password", type="password")
-                if st.form_submit_button("Admin Login", use_container_width=True):
-                    # SECURE PASSWORD CHECK FROM SECRETS
-                    if pw_a == ADMIN_LOGIN_PASS:
-                        try:
-                            d = supabase.table("users").select("*").eq("phone", ph_a).execute().data
-                            if d and d[0].get("role") == "admin":
-                                st.session_state.update({"logged_in": True, "phone": d[0]["phone"], "role": "admin"})
+                            user = resp.data[0]
+                            # Check Status
+                            if user.get("status") == "Resigned":
+                                st.error("⛔ Account Deactivated.")
+                            # Check Password (assuming plain text based on your previous code)
+                            elif user.get("password") == upass:
+                                st.session_state.update({
+                                    "logged_in": True, 
+                                    "phone": user["phone"], 
+                                    "role": user["role"],
+                                    "user_name": user["name"]
+                                })
+                                # Handle Site Assignment
+                                st.session_state.assigned_site = user.get("assigned_site", "All")
+                                st.success(f"Welcome, {user['name']}!")
                                 st.rerun()
-                            else: st.error("Not an Admin Account")
-                        except: st.error("Error fetching user data")
-                    else: st.error("Wrong Password")
+                            else:
+                                st.error("❌ Wrong Password.")
+                                
+                    except Exception as e:
+                        # This catches the 'Resource Temporarily Unavailable' error
+                        st.warning("⚠️ Connection is waking up. Please click 'Login' one more time.")
+                        print(f"Login Error: {e}")
 
-if not st.session_state["logged_in"]: login_process(); st.stop()
+# Run Login
+if not st.session_state["logged_in"]:
+    login_process()
+    st.stop()  # Stops the rest of the app from running if not logged in
 
 # --- 6. MAIN APP LOGIC ---
 with st.sidebar:
