@@ -403,7 +403,7 @@ if current_tab == "📝 Daily Entry":
         else: st.error("No active rate found for this date. Check Contractor settings.")
 
 # ==========================
-# 2. SITE LOGS
+# 2. SITE LOGS (UPDATED WITH DELETE FUNCTION)
 # ==========================
 elif current_tab == "🔍 Site Logs":
     st.subheader("🔍 Site Logs")
@@ -437,16 +437,48 @@ elif current_tab == "🔍 Site Logs":
         df_filtered["entered_by"] = df_filtered["site"].apply(get_user_for_site)
         
         st.markdown(f"**Showing {len(df_filtered)} entries**")
+        
+        # Display Table with ID FIRST so you know what to delete
         df_display = df_filtered[[
-            "date_str", "site", "entered_by", "contractor", 
+            "id", "date_str", "site", "entered_by", "contractor", 
             "count_mason", "count_helper", "count_ladies", 
             "total_cost", "work_description"
         ]].rename(columns={
+            "id": "ID (Use to Delete)",
             "date_str": "Date", "site": "Site", "entered_by": "Entered By",
             "contractor": "Contractor", "count_mason": "Mason", "count_helper": "Helper",
             "count_ladies": "Ladies", "total_cost": "Cost (₹)", "work_description": "Description"
         })
         st.dataframe(df_display, use_container_width=True, hide_index=True)
+        
+        # --- NEW DELETE SECTION ---
+        if st.session_state["role"] == "admin":
+            st.divider()
+            with st.expander("🗑️ Delete a Log Entry (Admin Only)"):
+                st.warning("⚠️ This action cannot be undone.")
+                c_del_1, c_del_2 = st.columns([1, 2])
+                
+                # Input for ID
+                del_id = c_del_1.number_input("Enter Entry ID to Delete", step=1, value=0)
+                
+                # Input for Code
+                del_code = c_del_2.text_input("Enter Security Code (9512)", type="password")
+                
+                if st.button("❌ Permanently Delete Entry", type="primary"):
+                    if del_code == "9512":
+                        if del_id > 0:
+                            try:
+                                supabase.table("entries").delete().eq("id", int(del_id)).execute()
+                                st.success(f"Entry ID {del_id} Deleted Successfully.")
+                                st.rerun()
+                            except Exception as e:
+                                st.error(f"Error deleting: {e}")
+                        else:
+                            st.error("Please enter a valid ID greater than 0.")
+                    else:
+                        st.error("🚫 Incorrect Security Code.")
+        # --------------------------
+        
     else: st.info("No logs found.")
 
 elif current_tab == "📊 Weekly Bill":
@@ -652,7 +684,7 @@ elif current_tab == "📂 Archive & Recovery":
             if confirm_text == "DELETE ALL":
                 try:
                     supabase.table("entries").delete().neq("id", 0).execute()
-                    st.success("✅ System Reset Successful! Ready for new year."); st.balloons()
+                    st.success("✅ System Reset Successful! Ready for new year.");
                     st.session_state["backup_unlocked"] = False
                 except Exception as e: st.error(f"Error: {e}")
             else: st.error("❌ Type 'DELETE ALL' exactly.")
@@ -761,7 +793,6 @@ elif current_tab == "📂 Archive & Recovery":
                             
                     progress_bar.progress(100)
                     status_text.success("✅ Restoration Complete! Your data is back online.")
-                    st.balloons()
                     
                 except Exception as e:
                     st.error(f"❌ Error during restore: {e}")
