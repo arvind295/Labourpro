@@ -165,46 +165,76 @@ def generate_pdf_bytes(site_name, week_label, billing_data):
 def render_weekly_bill(df_entries, df_contractors):
     if df_entries.empty: st.info("No data available."); return
     
-    # Ensure date format
+    # 1. Prepare Data
     df_entries["date_dt"] = pd.to_datetime(df_entries["date"], errors='coerce')
     df_contractors["effective_date"] = pd.to_datetime(df_contractors["effective_date"], errors='coerce').dt.date
     df_entries = df_entries.dropna(subset=["date_dt"])
     
-    # Calculate billing weeks
+    # 2. Calculate Billing Weeks (Sat-Fri)
     df_entries["start_date"] = df_entries["date_dt"].dt.date.apply(get_billing_start_date)
     df_entries["end_date"] = df_entries["start_date"] + timedelta(days=6)
     df_entries["week_label"] = df_entries.apply(lambda x: f"{x['start_date'].strftime('%d-%m-%Y')} to {x['end_date'].strftime('%d-%m-%Y')}", axis=1)
     
+    # 3. Select Week
     weeks = sorted(df_entries["week_label"].unique(), reverse=True)
     sel_week = st.selectbox("Select Week", weeks) if weeks else None
     if not sel_week: return
 
+    # Filter data for selected week
     df_week = df_entries[df_entries["week_label"] == sel_week].copy()
+    
+    # --- NEW LOGIC: GENERATE FULL 7-DAY RANGE (SAT to FRI) ---
+    week_start_obj = df_week.iloc[0]["start_date"] # Get the Saturday of this week
+    full_week_dates = [week_start_obj + timedelta(days=i) for i in range(7)] # List of all 7 dates
     
     for site_name in df_week["site"].unique():
         st.markdown(f"### 📍 Site: {site_name}")
         df_site = df_week[df_week["site"] == site_name]
         pdf_site_data = []
 
+        # Loop through Contractors found in this week
         for con_name in df_site["contractor"].unique():
             st.markdown(f"#### 👷 Contractor: {con_name}")
-            df_con_entries = df_site[df_site["contractor"] == con_name].sort_values("date")
+            
+            # Get existing entries for this contractor & site
+            df_con_entries = df_site[df_site["contractor"] == con_name]
+            
+            # Create a lookup dictionary: Date -> Row Data
+            # This lets us quickly find if work happened on a specific day
+            entry_map = {d.date(): r for d, r in zip(df_con_entries["date_dt"], df_con_entries.to_dict('records'))}
+            
             rows = []
             tm, th, tl, tamt = 0, 0, 0, 0
             
-            for _, row in df_con_entries.iterrows():
-                rows.append({"Date": row["date_dt"].strftime("%d-%m-%Y"), "Mason": row["count_mason"], "Helper": row["count_helper"], "Ladies": row["count_ladies"]})
-                tm += row["count_mason"]; th += row["count_helper"]; tl += row["count_ladies"]; tamt += row["total_cost"]
+            # --- LOOP THROUGH EVERY DAY (SAT -> FRI) ---
+            for day_date in full_week_dates:
+                if day_date in entry_map:
+                    # DATA EXISTS
+                    row = entry_map[day_date]
+                    m, h, l, cost = row["count_mason"], row["count_helper"], row["count_ladies"], row["total_cost"]
+                else:
+                    # NO DATA -> FILL ZERO
+                    m, h, l, cost = 0, 0, 0, 0
+                
+                rows.append({
+                    "Date": day_date.strftime("%d-%m-%Y"), 
+                    "Mason": m, "Helper": h, "Ladies": l
+                })
+                
+                # Add to totals
+                tm += m; th += h; tl += l; tamt += cost
 
+            # Get Rates (Same as before)
             rates = df_contractors[df_contractors["name"] == con_name].sort_values("effective_date", ascending=False)
             rm, rh, rl = (0,0,0)
             if not rates.empty:
-                valid_rates = rates[rates["effective_date"] <= df_week.iloc[0]["start_date"]]
+                valid_rates = rates[rates["effective_date"] <= week_start_obj]
                 curr = valid_rates.iloc[0] if not valid_rates.empty else rates.iloc[0]
                 rm, rh, rl = curr["rate_mason"], curr["rate_helper"], curr["rate_ladies"]
             
             pdf_site_data.append({"name": con_name, "rows": rows, "totals": {"m": tm, "h": th, "l": tl, "amt": tamt}, "rates": {"rm": rm, "rh": rh, "rl": rl}})
 
+            # Render Table
             st.markdown(f"""
             <table style="width:100%; border-collapse: collapse; color: black; background: white; font-size: 14px;">
             <tr style="background: #e0e0e0;"><th style="padding: 8px; border: 1px solid #ccc;">Date</th><th style="padding: 8px; border: 1px solid #ccc;">Mason</th><th style="padding: 8px; border: 1px solid #ccc;">Helper</th><th style="padding: 8px; border: 1px solid #ccc;">Ladies</th></tr>
