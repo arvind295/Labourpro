@@ -131,9 +131,11 @@ def get_billing_start_date(entry_date):
 class PDFBill(FPDF):
     def header(self):
         self.set_font('Arial', 'B', 16)
-        self.cell(0, 10, 'Labour Payment Bill', 0, 1, 'C'); self.ln(5)
+        self.cell(0, 10, 'Labour Payment Bill', 0, 1, 'C')
+        self.ln(5)
     def footer(self):
-        self.set_y(-15); self.set_font('Arial', 'I', 8)
+        self.set_y(-15)
+        self.set_font('Arial', 'I', 8)
         self.cell(0, 10, f'Page {self.page_no()}', 0, 0, 'C')
 
 def generate_pdf_bytes(site_name, week_label, billing_data):
@@ -141,34 +143,47 @@ def generate_pdf_bytes(site_name, week_label, billing_data):
     pdf.add_page()
     pdf.set_font("Arial", 'B', 12)
     pdf.cell(0, 10, f"Site: {site_name}", 0, 1, 'L')
-    pdf.cell(0, 10, f"Week: {week_label}", 0, 1, 'L'); pdf.ln(5)
+    pdf.cell(0, 10, f"Week: {week_label}", 0, 1, 'L')
+    pdf.ln(5)
 
     for con in billing_data:
-        pdf.set_fill_color(220, 220, 220); pdf.set_font("Arial", 'B', 12)
+        pdf.set_fill_color(220, 220, 220)
+        pdf.set_font("Arial", 'B', 12)
         pdf.cell(0, 10, f"Contractor: {con['name']}", 0, 1, 'L', fill=True)
         
         pdf.set_font("Arial", 'B', 10)
-        pdf.cell(30, 8, "Date", 1); pdf.cell(20, 8, "Mason", 1)
-        pdf.cell(20, 8, "Helper", 1); pdf.cell(20, 8, "Ladies", 1); pdf.ln()
+        pdf.cell(30, 8, "Date", 1)
+        pdf.cell(20, 8, "Mason", 1)
+        pdf.cell(20, 8, "Helper", 1)
+        pdf.cell(20, 8, "Ladies", 1)
+        pdf.ln()
         
         pdf.set_font("Arial", '', 10)
         for row in con['rows']:
-            pdf.cell(30, 8, str(row['Date']), 1); pdf.cell(20, 8, str(row['Mason']), 1)
-            pdf.cell(20, 8, str(row['Helper']), 1); pdf.cell(20, 8, str(row['Ladies']), 1); pdf.ln()
+            pdf.cell(30, 8, str(row['Date']), 1)
+            pdf.cell(20, 8, str(row['Mason']), 1)
+            pdf.cell(20, 8, str(row['Helper']), 1)
+            pdf.cell(20, 8, str(row['Ladies']), 1)
+            pdf.ln()
 
         pdf.set_font("Arial", 'B', 10)
-        pdf.cell(30, 8, "Totals", 1); pdf.cell(20, 8, str(con['totals']['m']), 1)
-        pdf.cell(20, 8, str(con['totals']['h']), 1); pdf.cell(20, 8, str(con['totals']['l']), 1); pdf.ln()
+        pdf.cell(30, 8, "Totals", 1)
+        pdf.cell(20, 8, str(con['totals']['m']), 1)
+        pdf.cell(20, 8, str(con['totals']['h']), 1)
+        pdf.cell(20, 8, str(con['totals']['l']), 1)
+        pdf.ln()
         
-        pdf.cell(30, 8, "Rate", 1); pdf.cell(20, 8, str(int(con['rates']['rm'])), 1)
-        pdf.cell(20, 8, str(int(con['rates']['rh'])), 1); pdf.cell(20, 8, str(int(con['rates']['rl'])), 1); pdf.ln()
+        # --- REMOVED RATE ROW HERE AS REQUESTED ---
 
         pdf.set_font("Arial", 'B', 12)
-        pdf.cell(90, 10, f"Total: Rs. {con['totals']['amt']:,.2f}", 1, 0, 'R'); pdf.ln(15)
+        pdf.cell(90, 10, f"Total: Rs. {con['totals']['amt']:,.2f}", 1, 0, 'R')
+        pdf.ln(15)
     return pdf.output(dest='S').encode('latin-1')
 
 def render_weekly_bill(df_entries, df_contractors):
-    if df_entries.empty: st.info("No data available."); return
+    if df_entries.empty: 
+        st.info("No data available.")
+        return
     
     # 1. Prepare Data
     df_entries["date_dt"] = pd.to_datetime(df_entries["date"], errors='coerce')
@@ -183,7 +198,9 @@ def render_weekly_bill(df_entries, df_contractors):
     # 3. Select Week
     weeks = sorted(df_entries["week_label"].unique(), reverse=True)
     sel_week = st.selectbox("Select Week", weeks) if weeks else None
-    if not sel_week: return
+    
+    if not sel_week: 
+        return
 
     # Filter data for selected week
     df_week = df_entries[df_entries["week_label"] == sel_week].copy()
@@ -344,16 +361,24 @@ if not st.session_state["logged_in"]:
 # --- 6. MAIN APP LOGIC ---
 with st.sidebar:
     st.info(f"Role: **{st.session_state['role'].upper()}**")
-    if st.button("Logout"): st.session_state.clear(); st.rerun()
+    if st.button("Logout"): 
+        st.session_state.clear()
+        st.rerun()
 
 tabs = ["📝 Daily Entry"]
-if st.session_state["role"] == "admin": tabs += ["🔍 Site Logs", "📊 Weekly Bill", "📍 Sites", "👷 Contractors", "👥 Users", "📂 Archive & Recovery"]
-current_tab = st.selectbox("Navigate", tabs, label_visibility="collapsed"); st.divider()
+if st.session_state["role"] == "admin": 
+    tabs += ["🔍 Site Logs", "📊 Weekly Bill", "📍 Sites", "👷 Contractors", "👥 Users", "📂 Archive & Recovery"]
+
+current_tab = st.selectbox("Navigate", tabs, label_visibility="collapsed")
+st.divider()
 
 # TAB 1: DAILY ENTRY
 if current_tab == "📝 Daily Entry":
-    df_sites = fetch_data("sites"); df_con = fetch_data("contractors")
-    if df_sites.empty: st.warning("Admin must add sites.")
+    df_sites = fetch_data("sites")
+    df_con = fetch_data("contractors")
+    
+    if df_sites.empty: 
+        st.warning("Admin must add sites.")
     else:
         av_sites = df_sites["name"].unique().tolist()
         
@@ -369,7 +394,8 @@ if current_tab == "📝 Daily Entry":
                 else:
                     av_sites = [s for s in av_sites if s in assigned_list]
             else:
-                st.error("No site assigned."); st.stop()
+                st.error("No site assigned.")
+                st.stop()
 
         if not av_sites:
             st.error("You are assigned to sites that no longer exist.")
@@ -380,7 +406,9 @@ if current_tab == "📝 Daily Entry":
         dt = c1.date_input("Date", date.today(), format="DD-MM-YYYY")
         
         st_sel = c2.selectbox("Site", av_sites, index=None, placeholder="Select Site...")
-        con_sel = c3.selectbox("Contractor", df_con["name"].unique(), index=None, placeholder="Select Contractor...") if not df_con.empty else None
+        
+        con_sel_options = df_con["name"].unique() if not df_con.empty else []
+        con_sel = c3.selectbox("Contractor", con_sel_options, index=None, placeholder="Select Contractor...")
         
         if st_sel and con_sel:
             st.write(f"**Entry for:** {st_sel} | {con_sel}")
@@ -388,8 +416,10 @@ if current_tab == "📝 Daily Entry":
             exist = None
             try:
                 r = supabase.table("entries").select("*").eq("date", str(dt)).eq("site", st_sel).eq("contractor", con_sel).execute()
-                if r.data: exist = r.data[0]
-            except: pass
+                if r.data: 
+                    exist = r.data[0]
+            except: 
+                pass
 
             mode = "new"
             if exist: 
@@ -397,16 +427,27 @@ if current_tab == "📝 Daily Entry":
                 st.warning("✏️ Editing Entry")
             
             # NIL ENTRY LOGIC
-            is_nil = st.checkbox("⛔ No Work / Holiday (Nil Entry)", value=(exist and exist.get("count_mason")==0 and exist.get("count_helper")==0 and exist.get("count_ladies")==0))
+            is_nil_default = False
+            if exist and exist.get("count_mason") == 0 and exist.get("count_helper") == 0 and exist.get("count_ladies") == 0:
+                is_nil_default = True
+                
+            is_nil = st.checkbox("⛔ No Work / Holiday (Nil Entry)", value=is_nil_default)
             
             if is_nil:
                 nm, nh, nl, cost = 0, 0, 0, 0
-                wdesc = st.text_input("Reason (Optional)", value=exist.get("work_description", "No Work / Holiday") if exist else "No Work / Holiday")
+                default_desc = "No Work / Holiday"
+                if exist:
+                    default_desc = exist.get("work_description", "No Work / Holiday")
+                
+                wdesc = st.text_input("Reason (Optional)", value=default_desc)
                 st.info("⚠️ This will be saved as a 'Nil' entry.")
             else:
                 vm, vh, vl, vd = 0.0, 0.0, 0.0, ""
                 if exist: 
-                    vm, vh, vl, vd = float(exist.get("count_mason", 0)), float(exist.get("count_helper", 0)), float(exist.get("count_ladies", 0)), exist.get("work_description", "")
+                    vm = float(exist.get("count_mason", 0))
+                    vh = float(exist.get("count_helper", 0))
+                    vl = float(exist.get("count_ladies", 0))
+                    vd = exist.get("work_description", "")
                 
                 c4, c5, c6 = st.columns(3)
                 nm = c4.number_input("Mason", value=vm, step=0.5)
@@ -417,55 +458,87 @@ if current_tab == "📝 Daily Entry":
                 rate_row = None
                 try:
                     rr = supabase.table("contractors").select("*").eq("name", con_sel).lte("effective_date", str(dt)).order("effective_date", desc=True).limit(1).execute()
-                    if rr.data: rate_row = rr.data[0]
-                except: pass
+                    if rr.data: 
+                        rate_row = rr.data[0]
+                except: 
+                    pass
 
                 if rate_row:
                     cost = (nm * rate_row['rate_mason']) + (nh * rate_row['rate_helper']) + (nl * rate_row['rate_ladies'])
-                    if st.session_state["role"] == "admin": st.info(f"💰 Est Cost: ₹{cost:,.2f}")
+                    if st.session_state["role"] == "admin": 
+                        st.info(f"💰 Est Cost: ₹{cost:,.2f}")
                 else:
                     st.error("No rate found. Cost will be 0.")
                     cost = 0
 
             if st.button("Save Entry", type="primary", use_container_width=True): 
-                load = {"date": str(dt), "site": st_sel, "contractor": con_sel, "count_mason": nm, "count_helper": nh, "count_ladies": nl, "total_cost": cost, "work_description": wdesc}
+                load = {
+                    "date": str(dt), 
+                    "site": st_sel, 
+                    "contractor": con_sel, 
+                    "count_mason": nm, 
+                    "count_helper": nh, 
+                    "count_ladies": nl, 
+                    "total_cost": cost, 
+                    "work_description": wdesc
+                }
                 try:
-                    if mode == "new": supabase.table("entries").insert(load).execute()
-                    else: supabase.table("entries").update(load).eq("id", exist["id"]).execute()
-                    st.success("✅ Saved Successfully!"); st.rerun()
+                    if mode == "new": 
+                        supabase.table("entries").insert(load).execute()
+                    else: 
+                        supabase.table("entries").update(load).eq("id", exist["id"]).execute()
+                    
+                    st.success("✅ Saved Successfully!")
+                    st.rerun()
                 except Exception as e:
                     st.warning("⚠️ Network timeout. Please click 'Save' again.")
 
     if st.session_state["role"] == "admin": 
-        st.divider(); st.subheader("📋 Recent Entries (Last 50)")
+        st.divider()
+        st.subheader("📋 Recent Entries (Last 50)")
         try:
             response = supabase.table("entries").select("*").order("date", desc=True).limit(50).execute()
-            if response.data: st.dataframe(pd.DataFrame(response.data)[["date", "site", "contractor", "total_cost", "work_description"]], use_container_width=True)
-        except: pass
+            if response.data: 
+                df_recent = pd.DataFrame(response.data)
+                st.dataframe(df_recent[["date", "site", "contractor", "total_cost", "work_description"]], use_container_width=True)
+        except: 
+            pass
 
 # TAB 2: SITE LOGS
 elif current_tab == "🔍 Site Logs":
     st.subheader("🔍 Site Logs")
     response = supabase.table("entries").select("*").order("date", desc=True).limit(500).execute()
     df_e = pd.DataFrame(response.data)
+    
     st.caption("Showing last 500 entries only. Use 'Weekly Bill' for full history.")
+    
     if not df_e.empty:
-        df_e["date_obj"] = pd.to_datetime(df_e["date"], errors='coerce'); df_e = df_e.dropna(subset=["date_obj"])
+        df_e["date_obj"] = pd.to_datetime(df_e["date"], errors='coerce')
+        df_e = df_e.dropna(subset=["date_obj"])
         df_e["Date"] = df_e["date_obj"].dt.strftime('%d-%m-%Y')
+        
         fil_site = st.selectbox("Filter Site", ["All"] + sorted(df_e["site"].unique().tolist()))
-        if fil_site != "All": df_e = df_e[df_e["site"] == fil_site]
+        if fil_site != "All": 
+            df_e = df_e[df_e["site"] == fil_site]
+            
         st.dataframe(df_e[["id", "Date", "site", "contractor", "count_mason", "count_helper", "count_ladies", "total_cost", "work_description"]], use_container_width=True, hide_index=True)
+        
         if st.session_state["role"] == "admin":
             st.divider()
             with st.expander("🗑️ Delete Entry"):
                 col_d1, col_d2 = st.columns([1, 2])
                 del_id = col_d1.number_input("ID to Delete", step=1, value=0)
                 del_code = col_d2.text_input("Security Code", type="password")
+                
                 if st.button("Delete Permanently", type="primary"):
                     if del_code == ADMIN_DELETE_CODE:
-                        supabase.table("entries").delete().eq("id", int(del_id)).execute(); st.success("Deleted"); st.rerun()
-                    else: st.error("Wrong Code")
-    else: st.info("No logs.")
+                        supabase.table("entries").delete().eq("id", int(del_id)).execute()
+                        st.success("Deleted")
+                        st.rerun()
+                    else: 
+                        st.error("Wrong Code")
+    else: 
+        st.info("No logs.")
 
 # TAB 3: BILLING
 elif current_tab == "📊 Weekly Bill":
@@ -476,6 +549,7 @@ elif current_tab == "📊 Weekly Bill":
         df_entries = pd.DataFrame(response.data)
     except:
         df_entries = fetch_data("entries")
+        
     render_weekly_bill(df_entries, fetch_data("contractors"))
 
 # TAB 4: SITE MANAGEMENT
@@ -485,14 +559,22 @@ elif current_tab == "📍 Sites":
     c1, c2 = st.columns(2)
     with c1:
         n = st.text_input("New Site Name")
-        if st.button("Add Site"): supabase.table("sites").insert({"name": n}).execute(); st.rerun()
+        if st.button("Add Site"): 
+            supabase.table("sites").insert({"name": n}).execute()
+            st.rerun()
     with c2:
-        if "site_ul" not in st.session_state: st.session_state["site_ul"] = False
-        def unlk(): st.session_state["site_ul"] = True
+        if "site_ul" not in st.session_state: 
+            st.session_state["site_ul"] = False
+            
+        def unlk(): 
+            st.session_state["site_ul"] = True
+            
         st.download_button("Unlock Delete (Download Backup)", data=json.dumps({"sites": fetch_data("sites").to_dict("records")}, default=str), file_name="site_bkp.json", on_click=unlk)
         d_site = st.selectbox("Delete Site", fetch_data("sites")["name"].unique()) if not fetch_data("sites").empty else None
         if st.button("Delete Site", disabled=not st.session_state["site_ul"]):
-             supabase.table("sites").delete().eq("name", d_site).execute(); st.success("Deleted"); st.rerun()
+             supabase.table("sites").delete().eq("name", d_site).execute()
+             st.success("Deleted")
+             st.rerun()
 
 # TAB 5: CONTRACTORS
 elif current_tab == "👷 Contractors":
@@ -500,90 +582,155 @@ elif current_tab == "👷 Contractors":
     df_c = fetch_data("contractors")
     st.dataframe(df_c.sort_values(by=["name", "effective_date"], ascending=[True, False]), use_container_width=True, hide_index=True)
     st.divider()
+    
     act = st.radio("Action", ["Add New", "Update Existing"], horizontal=True)
     with st.form("c_form"):
         cn = st.selectbox("Select", df_c["name"].unique()) if act == "Update Existing" and not df_c.empty else st.text_input("Name")
         c1, c2, c3 = st.columns(3)
-        rm = c1.number_input("Mason Rate", value=0); rh = c2.number_input("Helper Rate", value=0); rl = c3.number_input("Ladies Rate", value=0)
+        rm = c1.number_input("Mason Rate", value=0)
+        rh = c2.number_input("Helper Rate", value=0)
+        rl = c3.number_input("Ladies Rate", value=0)
         ed = st.date_input("Effective Date", date.today())
+        
         if st.form_submit_button("Save"):
-            supabase.table("contractors").insert({"name": cn, "rate_mason": rm, "rate_helper": rh, "rate_ladies": rl, "effective_date": str(ed)}).execute(); st.success("Saved"); st.rerun()
+            supabase.table("contractors").insert({
+                "name": cn, 
+                "rate_mason": rm, 
+                "rate_helper": rh, 
+                "rate_ladies": rl, 
+                "effective_date": str(ed)
+            }).execute()
+            st.success("Saved")
+            st.rerun()
 
 # TAB 6: USERS
 elif current_tab == "👥 Users":
     st.subheader("Users")
     st.dataframe(fetch_data("users"), use_container_width=True)
     st.markdown("### ➕ Add / Update User")
+    
     with st.form("u_add"):
         c_u1, c_u2 = st.columns(2)
-        ph = c_u1.text_input("Phone (Unique ID)", max_chars=10); nm = c_u2.text_input("Name")
+        ph = c_u1.text_input("Phone (Unique ID)", max_chars=10)
+        nm = c_u2.text_input("Name")
+        
         c_u3, c_u4 = st.columns(2)
-        rl = c_u3.selectbox("Role", ["user", "admin"]); all_sites = fetch_data("sites")["name"].tolist()
+        rl = c_u3.selectbox("Role", ["user", "admin"])
+        all_sites = fetch_data("sites")["name"].tolist()
         asites = c_u4.multiselect("Assigned Sites", all_sites)
+        
         if st.form_submit_button("Save User"):
             site_str = ", ".join(asites) if asites else "None/All"
+            
+            # Check if user exists
             if supabase.table("users").select("*").eq("phone", ph).execute().data:
-                supabase.table("users").update({"name": nm, "role": rl, "assigned_site": site_str}).eq("phone", ph).execute()
+                supabase.table("users").update({
+                    "name": nm, 
+                    "role": rl, 
+                    "assigned_site": site_str
+                }).eq("phone", ph).execute()
             else:
-                supabase.table("users").insert({"phone": ph, "name": nm, "role": rl, "assigned_site": site_str, "status": "Active"}).execute()
-            st.success("User Saved!"); st.rerun()
-    st.divider(); st.markdown("### 🚪 Deactivate User")
+                supabase.table("users").insert({
+                    "phone": ph, 
+                    "name": nm, 
+                    "role": rl, 
+                    "assigned_site": site_str, 
+                    "status": "Active"
+                }).execute()
+            st.success("User Saved!")
+            st.rerun()
+            
+    st.divider()
+    st.markdown("### 🚪 Deactivate User")
     users = fetch_data("users")
+    
     if not users.empty:
         active = users[(users["role"] != "admin")]
-        if "status" in active.columns: active = active[active["status"] != "Resigned"]
+        if "status" in active.columns: 
+            active = active[active["status"] != "Resigned"]
+            
         if not active.empty:
             sel_u = st.selectbox("Select User to Resign", [f"{r['name']} ({r['phone']})" for _, r in active.iterrows()])
             deact_pass = st.text_input("Enter Security Code to Confirm", type="password", key="deact_pass")
+            
             if st.button("Confirm Deactivation", type="primary"):
                 if deact_pass == ADMIN_DELETE_CODE:
                     ph_clean = sel_u.split("(")[-1].replace(")", "")
-                    supabase.table("users").update({"status": "Resigned"}).eq("phone", ph_clean).execute(); st.success("User deactivated"); st.rerun()
-                else: st.error("⚠️ Wrong Security Code.")
+                    supabase.table("users").update({"status": "Resigned"}).eq("phone", ph_clean).execute()
+                    st.success("User deactivated")
+                    st.rerun()
+                else: 
+                    st.error("⚠️ Wrong Security Code.")
 
 # TAB 7: ARCHIVE & RECOVERY
 elif current_tab == "📂 Archive & Recovery":
     st.subheader("Recovery Zone")
     t1, t2, t3 = st.tabs(["Reset Data", "View Archives (Offline)", "Restore Data"])
+    
     with t1:
         st.info("Download backup to unlock reset.")
-        if "reset_ul" not in st.session_state: st.session_state["reset_ul"] = False
-        def ul_res(): st.session_state["reset_ul"] = True
-        bkp = {"entries": fetch_data("entries").to_dict("records"), "users": fetch_data("users").to_dict("records"), "sites": fetch_data("sites").to_dict("records"), "contractors": fetch_data("contractors").to_dict("records")}
+        if "reset_ul" not in st.session_state: 
+            st.session_state["reset_ul"] = False
+            
+        def ul_res(): 
+            st.session_state["reset_ul"] = True
+            
+        bkp = {
+            "entries": fetch_data("entries").to_dict("records"), 
+            "users": fetch_data("users").to_dict("records"), 
+            "sites": fetch_data("sites").to_dict("records"), 
+            "contractors": fetch_data("contractors").to_dict("records")
+        }
         st.download_button("Download Backup", data=json.dumps(bkp, default=str), file_name="full_backup.json", on_click=ul_res)
+        
         c_del1, c_del2 = st.columns(2)
-        conf_txt = c_del1.text_input("Type 'DELETE ALL'"); conf_pass = c_del2.text_input("Admin Password", type="password")
+        conf_txt = c_del1.text_input("Type 'DELETE ALL'")
+        conf_pass = c_del2.text_input("Admin Password", type="password")
+        
         if st.button("Clear Entries", disabled=not st.session_state["reset_ul"], type="primary"):
             if conf_txt == "DELETE ALL" and conf_pass == ADMIN_DELETE_CODE:
-                supabase.table("entries").delete().neq("id", 0).execute(); st.success("Reset Complete"); st.session_state["reset_ul"] = False
-            else: st.error("Wrong Code or Text")
+                supabase.table("entries").delete().neq("id", 0).execute()
+                st.success("Reset Complete")
+                st.session_state["reset_ul"] = False
+            else: 
+                st.error("Wrong Code or Text")
 
     with t2:
         st.markdown("### 📜 View Old Data (No Restore)")
         f_view = st.file_uploader("Upload JSON to View", type=["json"], key="view_upload")
         if f_view:
             try:
-                d = json.load(f_view); st.success("File Loaded Successfully")
+                d = json.load(f_view)
+                st.success("File Loaded Successfully")
                 view_mode = st.radio("View Mode", ["Raw Data Tables", "Generate Weekly Bill"])
+                
                 if view_mode == "Raw Data Tables":
                     cat = st.selectbox("Category", ["Entries", "Users", "Sites", "Contractors"])
                     k_map = {"Entries": "entries", "Users": "users", "Sites": "sites", "Contractors": "contractors"}
-                    if d.get(k_map[cat]): st.dataframe(pd.DataFrame(d[k_map[cat]]), use_container_width=True)
-                    else: st.warning("No data found for this category.")
+                    if d.get(k_map[cat]): 
+                        st.dataframe(pd.DataFrame(d[k_map[cat]]), use_container_width=True)
+                    else: 
+                        st.warning("No data found for this category.")
+                        
                 elif view_mode == "Generate Weekly Bill":
                     st.info("Generating bill from uploaded backup file...")
                     if d.get("entries") and d.get("contractors"):
-                        ae = pd.DataFrame(d["entries"]); ac = pd.DataFrame(d["contractors"])
+                        ae = pd.DataFrame(d["entries"])
+                        ac = pd.DataFrame(d["contractors"])
                         render_weekly_bill(ae, ac)
-                    else: st.error("Backup file missing entries or contractors data.")
-            except Exception as e: st.error(f"Error reading file: {e}")
+                    else: 
+                        st.error("Backup file missing entries or contractors data.")
+            except Exception as e: 
+                st.error(f"Error reading file: {e}")
 
     with t3:
         f = st.file_uploader("Upload Backup JSON to Restore", key="res_up")
         res_pass = st.text_input("Restore Password", type="password")
+        
         if f and st.button("Restore Now", type="primary"):
             if res_pass == ADMIN_DELETE_CODE:
-                d = json.load(f); st.write("Restoring...")
+                d = json.load(f)
+                st.write("Restoring...")
                 try:
                     def clean(r): return [{k:v for k,v in x.items() if k!='id'} for x in r]
                     if d.get("sites"): supabase.table("sites").upsert(clean(d["sites"]), on_conflict="name").execute()
@@ -591,7 +738,10 @@ elif current_tab == "📂 Archive & Recovery":
                     if d.get("contractors"): supabase.table("contractors").upsert(clean(d["contractors"])).execute()
                     if d.get("entries"): 
                         ent = clean(d["entries"])
-                        for i in range(0, len(ent), 50): supabase.table("entries").insert(ent[i:i+50]).execute()
+                        for i in range(0, len(ent), 50): 
+                            supabase.table("entries").insert(ent[i:i+50]).execute()
                     st.success("Restored Successfully!")
-                except Exception as e: st.error(f"Error: {e}")
-            else: st.error("Wrong Password")
+                except Exception as e: 
+                    st.error(f"Error: {e}")
+            else: 
+                st.error("Wrong Password")
