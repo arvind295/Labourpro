@@ -43,8 +43,7 @@ except Exception:
     st.stop()
 
 # --- 3. SESSION & COOKIE MANAGER ---
-# FIXED: Removed 'experimental_allow_widgets=True'
-@st.cache_resource
+# We do NOT cache this because it mounts a component (widget)
 def get_manager():
     return stx.CookieManager()
 
