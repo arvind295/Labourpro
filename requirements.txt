@@ -2,3 +2,4 @@ streamlit
 pandas
 supabase
 fpdf
+pip install extra-streamlit-components
