@@ -471,18 +471,23 @@ if not st.session_state["logged_in"]:
 with st.sidebar:
     st.info(f"Role: **{st.session_state['role'].upper()}**")
     if st.button("Logout"):
-        # Clear DB token (optional, but cleaner)
+        # 1. Clear DB token first (Crucial for Sync)
         if st.session_state.get("phone"):
             try:
                 supabase.table("users").update({"session_token": None}).eq("phone", st.session_state["phone"]).execute()
             except: 
                 pass
         
-        # Clear Cookie
+        # 2. Delete Cookie
         cookie_manager.delete("auth_token")
         
-        # Clear State
+        # 3. Clear State
         st.session_state.clear()
+        
+        # 4. Wait for browser to process deletion
+        time.sleep(1)
+        
+        # 5. Rerun
         st.rerun()
 
 # --- 9. MAIN APP NAVIGATION ---
