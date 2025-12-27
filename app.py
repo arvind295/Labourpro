@@ -372,7 +372,10 @@ if not st.session_state["logged_in"] and stored_token:
             st.toast(f"Welcome back, {user['name']}!")
         else:
             # Token invalid or logged in elsewhere -> Clear cookie
-            cookie_manager.delete("auth_token")
+            try:
+                cookie_manager.delete("auth_token")
+            except KeyError:
+                pass
     except Exception as e:
         pass
 
@@ -467,7 +470,7 @@ if not st.session_state["logged_in"]:
     login_process()
     st.stop()
 
-# --- 8. LOGOUT LOGIC ---
+# --- 8. LOGOUT LOGIC (FIXED) ---
 with st.sidebar:
     st.info(f"Role: **{st.session_state['role'].upper()}**")
     if st.button("Logout"):
@@ -478,8 +481,11 @@ with st.sidebar:
             except: 
                 pass
         
-        # 2. Delete Cookie
-        cookie_manager.delete("auth_token")
+        # 2. Delete Cookie (Wrapped in Try/Except to prevent KeyError)
+        try:
+            cookie_manager.delete("auth_token")
+        except KeyError:
+            pass # Cookie already gone, safe to proceed
         
         # 3. Clear State
         st.session_state.clear()
