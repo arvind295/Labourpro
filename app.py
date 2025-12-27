@@ -115,8 +115,11 @@ def fetch_data(table):
             response = supabase.table(table).select("*").range(current_start, current_start + page_size - 1).execute()
             data_chunk = response.data
             all_data.extend(data_chunk)
+            
+            # If we fetched less than the page size, we are done
             if len(data_chunk) < page_size:
                 break
+                
             current_start += page_size
         except Exception as e:
             st.error(f"Error fetching data chunk: {e}")
@@ -138,18 +141,22 @@ class PDFBill(FPDF):
         self.set_font('Arial', 'I', 8)
         self.cell(0, 10, f'Page {self.page_no()}', 0, 0, 'C')
 
-def generate_pdf_bytes(site_name, week_label, billing_data):
+def generate_pdf_bytes(header_name, week_label, billing_data):
     pdf = PDFBill()
     pdf.add_page()
     pdf.set_font("Arial", 'B', 12)
-    pdf.cell(0, 10, f"Site: {site_name}", 0, 1, 'L')
+    
+    # header_name is either the Site Name (Tab 1) or Contractor Name (Tab 2)
+    pdf.cell(0, 10, f"Bill For: {header_name}", 0, 1, 'L')
     pdf.cell(0, 10, f"Week: {week_label}", 0, 1, 'L')
     pdf.ln(5)
 
-    for con in billing_data:
+    for item in billing_data:
         pdf.set_fill_color(220, 220, 220)
         pdf.set_font("Arial", 'B', 12)
-        pdf.cell(0, 10, f"Contractor: {con['name']}", 0, 1, 'L', fill=True)
+        
+        # item['name'] corresponds to the Contractor (Tab 1) or Site (Tab 2)
+        pdf.cell(0, 10, f"{item['name']}", 0, 1, 'L', fill=True)
         
         pdf.set_font("Arial", 'B', 10)
         pdf.cell(30, 8, "Date", 1)
@@ -159,7 +166,7 @@ def generate_pdf_bytes(site_name, week_label, billing_data):
         pdf.ln()
         
         pdf.set_font("Arial", '', 10)
-        for row in con['rows']:
+        for row in item['rows']:
             pdf.cell(30, 8, str(row['Date']), 1)
             pdf.cell(20, 8, str(row['Mason']), 1)
             pdf.cell(20, 8, str(row['Helper']), 1)
@@ -168,16 +175,17 @@ def generate_pdf_bytes(site_name, week_label, billing_data):
 
         pdf.set_font("Arial", 'B', 10)
         pdf.cell(30, 8, "Totals", 1)
-        pdf.cell(20, 8, str(con['totals']['m']), 1)
-        pdf.cell(20, 8, str(con['totals']['h']), 1)
-        pdf.cell(20, 8, str(con['totals']['l']), 1)
+        pdf.cell(20, 8, str(item['totals']['m']), 1)
+        pdf.cell(20, 8, str(item['totals']['h']), 1)
+        pdf.cell(20, 8, str(item['totals']['l']), 1)
         pdf.ln()
         
-        # --- REMOVED RATE ROW HERE AS REQUESTED ---
-
+        # --- REMOVED RATE ROW FROM PDF AS REQUESTED ---
+        
         pdf.set_font("Arial", 'B', 12)
-        pdf.cell(90, 10, f"Total: Rs. {con['totals']['amt']:,.2f}", 1, 0, 'R')
+        pdf.cell(90, 10, f"Total: Rs. {item['totals']['amt']:,.2f}", 1, 0, 'R')
         pdf.ln(15)
+        
     return pdf.output(dest='S').encode('latin-1')
 
 def render_weekly_bill(df_entries, df_contractors):
@@ -195,87 +203,162 @@ def render_weekly_bill(df_entries, df_contractors):
     df_entries["end_date"] = df_entries["start_date"] + timedelta(days=6)
     df_entries["week_label"] = df_entries.apply(lambda x: f"{x['start_date'].strftime('%d-%m-%Y')} to {x['end_date'].strftime('%d-%m-%Y')}", axis=1)
     
-    # 3. Select Week
+    # 3. GLOBAL WEEK SELECTOR
     weeks = sorted(df_entries["week_label"].unique(), reverse=True)
     sel_week = st.selectbox("Select Week", weeks) if weeks else None
     
     if not sel_week: 
         return
 
-    # Filter data for selected week
+    # Filter Data for the selected week
     df_week = df_entries[df_entries["week_label"] == sel_week].copy()
-    
     week_start_obj = df_week.iloc[0]["start_date"]
     full_week_dates = [week_start_obj + timedelta(days=i) for i in range(7)] 
     
-    for site_name in df_week["site"].unique():
-        st.markdown(f"### 📍 Site: {site_name}")
-        st.markdown("---")
-        df_site = df_week[df_week["site"] == site_name]
-        pdf_site_data = []
-
-        for con_name in df_site["contractor"].unique():
-            # --- CALCULATIONS (Behind the Scenes) ---
-            df_con_entries = df_site[df_site["contractor"] == con_name]
-            entry_map = {d.date(): r for d, r in zip(df_con_entries["date_dt"], df_con_entries.to_dict('records'))}
-            
-            rows = []
-            tm, th, tl, tamt = 0, 0, 0, 0
-            
-            for day_date in full_week_dates:
-                m, h, l, cost = 0, 0, 0, 0
-                d_m, d_h, d_l = "0", "0", "0" 
-
-                if day_date in entry_map:
-                    row = entry_map[day_date]
-                    m, h, l, cost = row["count_mason"], row["count_helper"], row["count_ladies"], row["total_cost"]
-                    if m == 0 and h == 0 and l == 0:
-                        d_m, d_h, d_l = "Nil", "Nil", "Nil"
-                    else:
-                        d_m, d_h, d_l = str(m), str(h), str(l)
-                else:
-                    d_m, d_h, d_l = "0", "0", "0"
-                
-                rows.append({"Date": day_date.strftime("%d-%m-%Y"), "Mason": d_m, "Helper": d_h, "Ladies": d_l})
-                tm += m; th += h; tl += l; tamt += cost
-
-            # Get Rates
-            rates = df_contractors[df_contractors["name"] == con_name].sort_values("effective_date", ascending=False)
-            rm, rh, rl = (0,0,0)
-            if not rates.empty:
-                valid_rates = rates[rates["effective_date"] <= week_start_obj]
-                curr = valid_rates.iloc[0] if not valid_rates.empty else rates.iloc[0]
-                rm, rh, rl = curr["rate_mason"], curr["rate_helper"], curr["rate_ladies"]
-            
-            pdf_site_data.append({"name": con_name, "rows": rows, "totals": {"m": tm, "h": th, "l": tl, "amt": tamt}, "rates": {"rm": rm, "rh": rh, "rl": rl}})
-
-            # --- DISPLAY: SUMMARY CARDS (Visible by Default) ---
-            st.markdown(f"#### 👷 {con_name}")
-            
-            # Use columns to show key stats clearly
-            k1, k2, k3, k4 = st.columns(4)
-            k1.metric("💰 Payable", f"₹{tamt:,.0f}")
-            k2.metric("🧱 Masons", f"{tm}")
-            k3.metric("🛠️ Helpers", f"{th}")
-            k4.metric("👩 Ladies", f"{tl}")
-
-            # --- DISPLAY: EXPANDER (Click to see Table) ---
-            with st.expander(f"📄 View Daily Details for {con_name}"):
-                st.markdown(f"""
-                <table style="width:100%; border-collapse: collapse; color: black; background: white; font-size: 14px;">
-                <tr style="background: #e0e0e0;"><th style="padding: 8px; border: 1px solid #ccc;">Date</th><th style="padding: 8px; border: 1px solid #ccc;">Mason</th><th style="padding: 8px; border: 1px solid #ccc;">Helper</th><th style="padding: 8px; border: 1px solid #ccc;">Ladies</th></tr>
-                {''.join([f"<tr><td style='padding: 8px; border: 1px solid #ccc;'>{r['Date']}</td><td style='padding: 8px; border: 1px solid #ccc;'>{r['Mason']}</td><td style='padding: 8px; border: 1px solid #ccc;'>{r['Helper']}</td><td style='padding: 8px; border: 1px solid #ccc;'>{r['Ladies']}</td></tr>" for r in rows])}
-                <tr style="font-weight: bold; background: #f9f9f9;"><td style="padding: 8px; border: 1px solid #ccc;">Total</td><td style="padding: 8px; border: 1px solid #ccc;">{tm}</td><td style="padding: 8px; border: 1px solid #ccc;">{th}</td><td style="padding: 8px; border: 1px solid #ccc;">{tl}</td></tr>
-                </table><br>""", unsafe_allow_html=True)
-
+    # 4. INDEPENDENT TABS
+    tab_site, tab_con = st.tabs(["🏢 View by Site", "👷 View by Contractor"])
+    
+    # ==========================
+    # TAB 1: VIEW BY SITE
+    # ==========================
+    with tab_site:
+        all_sites = sorted(df_week["site"].unique())
+        sel_site = st.selectbox("Select Site", all_sites, key="sb_site")
+        
+        if sel_site:
             st.divider()
+            st.markdown(f"### 📍 Site: {sel_site}")
+            
+            # Filter for this Site
+            df_view = df_week[df_week["site"] == sel_site]
+            pdf_data = []
 
-        # Download Button (One per Site)
-        if pdf_site_data:
-            try:
-                pdf_bytes = generate_pdf_bytes(site_name, sel_week, pdf_site_data)
-                st.download_button(label=f"⬇️ Download Bill PDF ({site_name})", data=pdf_bytes, file_name=f"Bill_{site_name}_{sel_week}.pdf", mime="application/pdf", key=f"pdf_{site_name}")
-            except: pass
+            # Loop through Contractors on this Site
+            for con_name in df_view["contractor"].unique():
+                df_sub = df_view[df_view["contractor"] == con_name]
+                
+                # Calculate Rows
+                entry_map = {d.date(): r for d, r in zip(df_sub["date_dt"], df_sub.to_dict('records'))}
+                rows = []
+                tm, th, tl, tamt = 0, 0, 0, 0
+                
+                for day_date in full_week_dates:
+                    if day_date in entry_map:
+                        r = entry_map[day_date]
+                        m, h, l, c = r["count_mason"], r["count_helper"], r["count_ladies"], r["total_cost"]
+                        
+                        if m == 0 and h == 0 and l == 0:
+                            dm, dh, dl = "Nil", "Nil", "Nil"
+                        else:
+                            dm, dh, dl = str(m), str(h), str(l)
+                    else:
+                        m, h, l, c = 0, 0, 0, 0
+                        dm, dh, dl = "0", "0", "0"
+                    
+                    rows.append({"Date": day_date.strftime("%d-%m-%Y"), "Mason": dm, "Helper": dh, "Ladies": dl})
+                    tm += m
+                    th += h
+                    tl += l
+                    tamt += c
+                
+                # Get Rates
+                rates = df_contractors[df_contractors["name"] == con_name].sort_values("effective_date", ascending=False)
+                rm, rh, rl = (0,0,0)
+                if not rates.empty:
+                    valid_rates = rates[rates["effective_date"] <= week_start_obj]
+                    curr = valid_rates.iloc[0] if not valid_rates.empty else rates.iloc[0]
+                    rm, rh, rl = curr["rate_mason"], curr["rate_helper"], curr["rate_ladies"]
+
+                pdf_data.append({"name": con_name, "rows": rows, "totals": {"m": tm, "h": th, "l": tl, "amt": tamt}, "rates": {"rm": rm, "rh": rh, "rl": rl}})
+
+                # Display Card
+                st.markdown(f"#### 👷 {con_name}")
+                k1, k2, k3, k4 = st.columns(4)
+                k1.metric("💰 Payable", f"₹{tamt:,.0f}")
+                k2.metric("🧱 Masons", f"{tm}")
+                k3.metric("🛠️ Helpers", f"{th}")
+                k4.metric("👩 Ladies", f"{tl}")
+                
+                with st.expander(f"📄 Details: {con_name}"):
+                    st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+
+            if pdf_data:
+                try:
+                    pdf_bytes = generate_pdf_bytes(sel_site, sel_week, pdf_data)
+                    st.download_button(f"⬇️ PDF ({sel_site})", pdf_bytes, f"Bill_{sel_site}.pdf", "application/pdf")
+                except: 
+                    pass
+
+    # ==========================
+    # TAB 2: VIEW BY CONTRACTOR
+    # ==========================
+    with tab_con:
+        all_cons = sorted(df_week["contractor"].unique())
+        sel_con = st.selectbox("Select Contractor", all_cons, key="sb_con")
+        
+        if sel_con:
+            st.divider()
+            st.markdown(f"### 👷 Contractor: {sel_con}")
+            
+            # Filter for this Contractor
+            df_view = df_week[df_week["contractor"] == sel_con]
+            pdf_data = []
+
+            # Loop through SITES this Contractor worked at
+            for site_name in df_view["site"].unique():
+                df_sub = df_view[df_view["site"] == site_name]
+                
+                # Calculate Rows
+                entry_map = {d.date(): r for d, r in zip(df_sub["date_dt"], df_sub.to_dict('records'))}
+                rows = []
+                tm, th, tl, tamt = 0, 0, 0, 0
+                
+                for day_date in full_week_dates:
+                    if day_date in entry_map:
+                        r = entry_map[day_date]
+                        m, h, l, c = r["count_mason"], r["count_helper"], r["count_ladies"], r["total_cost"]
+                        
+                        if m == 0 and h == 0 and l == 0:
+                            dm, dh, dl = "Nil", "Nil", "Nil"
+                        else:
+                            dm, dh, dl = str(m), str(h), str(l)
+                    else:
+                        m, h, l, c = 0, 0, 0, 0
+                        dm, dh, dl = "0", "0", "0"
+                    
+                    rows.append({"Date": day_date.strftime("%d-%m-%Y"), "Mason": dm, "Helper": dh, "Ladies": dl})
+                    tm += m
+                    th += h
+                    tl += l
+                    tamt += c
+                
+                # Get Rates
+                rates = df_contractors[df_contractors["name"] == sel_con].sort_values("effective_date", ascending=False)
+                rm, rh, rl = (0,0,0)
+                if not rates.empty:
+                    valid_rates = rates[rates["effective_date"] <= week_start_obj]
+                    curr = valid_rates.iloc[0] if not valid_rates.empty else rates.iloc[0]
+                    rm, rh, rl = curr["rate_mason"], curr["rate_helper"], curr["rate_ladies"]
+
+                pdf_data.append({"name": site_name, "rows": rows, "totals": {"m": tm, "h": th, "l": tl, "amt": tamt}, "rates": {"rm": rm, "rh": rh, "rl": rl}})
+
+                # Display Card
+                st.markdown(f"#### 📍 {site_name}")
+                k1, k2, k3, k4 = st.columns(4)
+                k1.metric("💰 Payable", f"₹{tamt:,.0f}")
+                k2.metric("🧱 Masons", f"{tm}")
+                k3.metric("🛠️ Helpers", f"{th}")
+                k4.metric("👩 Ladies", f"{tl}")
+                
+                with st.expander(f"📄 Details: {site_name}"):
+                    st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+
+            if pdf_data:
+                try:
+                    pdf_bytes = generate_pdf_bytes(sel_con, sel_week, pdf_data)
+                    st.download_button(f"⬇️ PDF ({sel_con})", pdf_bytes, f"Bill_{sel_con}.pdf", "application/pdf")
+                except: 
+                    pass
 
 # --- 5. LOGIN SYSTEM ---
 if "logged_in" not in st.session_state:
@@ -286,7 +369,7 @@ def login_process():
     with col2:
         st.markdown("<br><h1 style='text-align: center; color: black;'>🏗️ LabourPro</h1><p style='text-align: center; color: grey;'>Site Entry Portal</p><hr>", unsafe_allow_html=True)
         
-        # --- 1. TEAM LOGIN (No Password - Phone Only) ---
+        # --- 1. TEAM LOGIN ---
         st.subheader("👷 Team Login")
         with st.form("u_log"):
             ph = st.text_input("Enter Mobile Number", max_chars=10, placeholder="9876543210")
@@ -294,7 +377,6 @@ def login_process():
             if st.form_submit_button("🚀 Login", type="primary", use_container_width=True):
                 if ph:
                     try:
-                        # FAST FETCH: Only get the specific user to avoid crashing
                         response = supabase.table("users").select("*").eq("phone", ph).execute()
                         
                         if not response.data:
@@ -302,13 +384,11 @@ def login_process():
                         else:
                             user = response.data[0]
                             
-                            # Check if active
                             if user.get("status") == "Resigned":
                                 st.error("⛔ Account Deactivated.")
                             elif user.get("role") == "admin":
                                 st.error("⚠️ Admins: Please use the 'Admin Login' below.")
                             else:
-                                # SUCCESS: Log them in
                                 st.session_state.update({
                                     "logged_in": True, 
                                     "phone": user["phone"], 
@@ -324,17 +404,15 @@ def login_process():
 
         st.markdown("<br>", unsafe_allow_html=True)
 
-        # --- 2. ADMIN LOGIN (Hidden in Expander) ---
+        # --- 2. ADMIN LOGIN ---
         with st.expander("🔐 Admin Login"):
             with st.form("a_log"):
                 ph_a = st.text_input("Admin Mobile")
                 pw_a = st.text_input("Password", type="password")
                 
                 if st.form_submit_button("Admin Login", use_container_width=True):
-                    # Check Credentials from secrets.toml first (Instant)
                     if pw_a == ADMIN_LOGIN_PASS:
                         try:
-                            # Verify Admin exists in DB (Fast Fetch)
                             response = supabase.table("users").select("*").eq("phone", ph_a).execute()
                             
                             if response.data and response.data[0].get("role") == "admin":
