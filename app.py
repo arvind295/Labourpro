@@ -28,7 +28,7 @@ except Exception:
 
 # --- 2. CONNECT TO SUPABASE ---
 try:
-    @st.cache_resource
+    @st.cache_resource(ttl=3600)
     def init_connection():
         url = st.secrets["supabase"]["url"]
         key = st.secrets["supabase"]["key"]
@@ -375,9 +375,21 @@ if current_tab == "📝 Daily Entry":
                 
                 if st.button("Save Entry", type="primary", use_container_width=True): 
                     load = {"date": str(dt), "site": st_sel, "contractor": con_sel, "count_mason": nm, "count_helper": nh, "count_ladies": nl, "total_cost": cost, "work_description": wdesc}
-                    if mode == "new": supabase.table("entries").insert(load).execute()
-                    else: supabase.table("entries").update(load).eq("id", exist["id"]).execute()
-                    st.success("Saved"); st.rerun()
+                    
+                    try:
+                        # Attempt to save
+                        if mode == "new": 
+                            supabase.table("entries").insert(load).execute()
+                        else: 
+                            supabase.table("entries").update(load).eq("id", exist["id"]).execute()
+                        
+                        st.success("✅ Saved Successfully!")
+                        st.rerun()
+
+                    except Exception as e:
+                        # Catches the 'ReadError' and tells you to try again safely
+                        st.warning("⚠️ Network timeout. Please click 'Save' again.")
+                        print(f"Save Error: {e}")
             else: st.error("No rate found for this date.")
 
 # --- PASTE THIS NEW SECTION (ADMIN ONLY VERSION) ---
