@@ -344,10 +344,15 @@ if current_tab == "📝 Daily Entry":
         st.subheader("New Work Entry")
         c1, c2, c3 = st.columns(3)
         dt = c1.date_input("Date", date.today(), format="DD-MM-YYYY")
-        st_sel = c2.selectbox("Site", av_sites)
-        con_sel = c3.selectbox("Contractor", df_con["name"].unique()) if not df_con.empty else None
         
-        if con_sel:
+        # CHANGED: index=None forces the user to click and select manually
+        st_sel = c2.selectbox("Site", av_sites, index=None, placeholder="Select Site...")
+        
+        # CHANGED: index=None forces selection here too
+        con_sel = c3.selectbox("Contractor", df_con["name"].unique(), index=None, placeholder="Select Contractor...") if not df_con.empty else None
+        
+        # Only show the rest of the form if BOTH are selected
+        if st_sel and con_sel:
             exist = None
             try:
                 r = supabase.table("entries").select("*").eq("date", str(dt)).eq("site", st_sel).eq("contractor", con_sel).execute()
