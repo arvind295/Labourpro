@@ -1,9 +1,12 @@
 import streamlit as st
 import pandas as pd
 import json
+import uuid
+import time
 from datetime import datetime, date, timedelta
 from supabase import create_client
 from fpdf import FPDF
+import extra_streamlit_components as stx 
 import io
 
 # --- 1. CONFIGURATION & SECRETS ---
@@ -39,7 +42,14 @@ except Exception:
     st.error("⚠️ Supabase connection failed. Check secrets.toml.")
     st.stop()
 
-# --- 3. CUSTOM STYLING ---
+# --- 3. SESSION & COOKIE MANAGER ---
+@st.cache_resource(experimental_allow_widgets=True)
+def get_manager():
+    return stx.CookieManager()
+
+cookie_manager = get_manager()
+
+# --- 4. CUSTOM STYLING ---
 def apply_custom_styling():
     st.markdown("""
         <style>
@@ -104,7 +114,7 @@ def apply_custom_styling():
 
 apply_custom_styling()
 
-# --- 4. HELPER FUNCTIONS & PDF ENGINE ---
+# --- 5. HELPER FUNCTIONS & PDF ENGINE ---
 def fetch_data(table):
     all_data = []
     page_size = 1000
@@ -116,10 +126,8 @@ def fetch_data(table):
             data_chunk = response.data
             all_data.extend(data_chunk)
             
-            # If we fetched less than the page size, we are done
             if len(data_chunk) < page_size:
                 break
-                
             current_start += page_size
         except Exception as e:
             st.error(f"Error fetching data chunk: {e}")
@@ -145,8 +153,6 @@ def generate_pdf_bytes(header_name, week_label, billing_data):
     pdf = PDFBill()
     pdf.add_page()
     pdf.set_font("Arial", 'B', 12)
-    
-    # header_name is either the Site Name (Tab 1) or Contractor Name (Tab 2)
     pdf.cell(0, 10, f"Bill For: {header_name}", 0, 1, 'L')
     pdf.cell(0, 10, f"Week: {week_label}", 0, 1, 'L')
     pdf.ln(5)
@@ -154,8 +160,6 @@ def generate_pdf_bytes(header_name, week_label, billing_data):
     for item in billing_data:
         pdf.set_fill_color(220, 220, 220)
         pdf.set_font("Arial", 'B', 12)
-        
-        # item['name'] corresponds to the Contractor (Tab 1) or Site (Tab 2)
         pdf.cell(0, 10, f"{item['name']}", 0, 1, 'L', fill=True)
         
         pdf.set_font("Arial", 'B', 10)
@@ -180,12 +184,9 @@ def generate_pdf_bytes(header_name, week_label, billing_data):
         pdf.cell(20, 8, str(item['totals']['l']), 1)
         pdf.ln()
         
-        # --- REMOVED RATE ROW FROM PDF AS REQUESTED ---
-        
         pdf.set_font("Arial", 'B', 12)
         pdf.cell(90, 10, f"Total: Rs. {item['totals']['amt']:,.2f}", 1, 0, 'R')
         pdf.ln(15)
-        
     return pdf.output(dest='S').encode('latin-1')
 
 def render_weekly_bill(df_entries, df_contractors):
@@ -198,29 +199,27 @@ def render_weekly_bill(df_entries, df_contractors):
     df_contractors["effective_date"] = pd.to_datetime(df_contractors["effective_date"], errors='coerce').dt.date
     df_entries = df_entries.dropna(subset=["date_dt"])
     
-    # 2. Calculate Billing Weeks (Sat-Fri)
+    # 2. Calculate Billing Weeks
     df_entries["start_date"] = df_entries["date_dt"].dt.date.apply(get_billing_start_date)
     df_entries["end_date"] = df_entries["start_date"] + timedelta(days=6)
     df_entries["week_label"] = df_entries.apply(lambda x: f"{x['start_date'].strftime('%d-%m-%Y')} to {x['end_date'].strftime('%d-%m-%Y')}", axis=1)
     
-    # 3. GLOBAL WEEK SELECTOR
+    # 3. Week Selector
     weeks = sorted(df_entries["week_label"].unique(), reverse=True)
     sel_week = st.selectbox("Select Week", weeks) if weeks else None
     
     if not sel_week: 
         return
 
-    # Filter Data for the selected week
+    # Filter Data
     df_week = df_entries[df_entries["week_label"] == sel_week].copy()
     week_start_obj = df_week.iloc[0]["start_date"]
     full_week_dates = [week_start_obj + timedelta(days=i) for i in range(7)] 
     
-    # 4. INDEPENDENT TABS
+    # 4. Independent Tabs
     tab_site, tab_con = st.tabs(["🏢 View by Site", "👷 View by Contractor"])
     
-    # ==========================
-    # TAB 1: VIEW BY SITE
-    # ==========================
+    # --- TAB 1: SITE VIEW ---
     with tab_site:
         all_sites = sorted(df_week["site"].unique())
         sel_site = st.selectbox("Select Site", all_sites, key="sb_site")
@@ -229,16 +228,13 @@ def render_weekly_bill(df_entries, df_contractors):
             st.divider()
             st.markdown(f"### 📍 Site: {sel_site}")
             
-            # Filter for this Site
             df_view = df_week[df_week["site"] == sel_site]
             pdf_data = []
 
-            # Loop through Contractors on this Site
             for con_name in df_view["contractor"].unique():
                 df_sub = df_view[df_view["contractor"] == con_name]
-                
-                # Calculate Rows
                 entry_map = {d.date(): r for d, r in zip(df_sub["date_dt"], df_sub.to_dict('records'))}
+                
                 rows = []
                 tm, th, tl, tamt = 0, 0, 0, 0
                 
@@ -261,7 +257,6 @@ def render_weekly_bill(df_entries, df_contractors):
                     tl += l
                     tamt += c
                 
-                # Get Rates
                 rates = df_contractors[df_contractors["name"] == con_name].sort_values("effective_date", ascending=False)
                 rm, rh, rl = (0,0,0)
                 if not rates.empty:
@@ -271,7 +266,6 @@ def render_weekly_bill(df_entries, df_contractors):
 
                 pdf_data.append({"name": con_name, "rows": rows, "totals": {"m": tm, "h": th, "l": tl, "amt": tamt}, "rates": {"rm": rm, "rh": rh, "rl": rl}})
 
-                # Display Card
                 st.markdown(f"#### 👷 {con_name}")
                 k1, k2, k3, k4 = st.columns(4)
                 k1.metric("💰 Payable", f"₹{tamt:,.0f}")
@@ -289,9 +283,7 @@ def render_weekly_bill(df_entries, df_contractors):
                 except: 
                     pass
 
-    # ==========================
-    # TAB 2: VIEW BY CONTRACTOR
-    # ==========================
+    # --- TAB 2: CONTRACTOR VIEW ---
     with tab_con:
         all_cons = sorted(df_week["contractor"].unique())
         sel_con = st.selectbox("Select Contractor", all_cons, key="sb_con")
@@ -300,16 +292,13 @@ def render_weekly_bill(df_entries, df_contractors):
             st.divider()
             st.markdown(f"### 👷 Contractor: {sel_con}")
             
-            # Filter for this Contractor
             df_view = df_week[df_week["contractor"] == sel_con]
             pdf_data = []
 
-            # Loop through SITES this Contractor worked at
             for site_name in df_view["site"].unique():
                 df_sub = df_view[df_view["site"] == site_name]
-                
-                # Calculate Rows
                 entry_map = {d.date(): r for d, r in zip(df_sub["date_dt"], df_sub.to_dict('records'))}
+                
                 rows = []
                 tm, th, tl, tamt = 0, 0, 0, 0
                 
@@ -332,7 +321,6 @@ def render_weekly_bill(df_entries, df_contractors):
                     tl += l
                     tamt += c
                 
-                # Get Rates
                 rates = df_contractors[df_contractors["name"] == sel_con].sort_values("effective_date", ascending=False)
                 rm, rh, rl = (0,0,0)
                 if not rates.empty:
@@ -342,7 +330,6 @@ def render_weekly_bill(df_entries, df_contractors):
 
                 pdf_data.append({"name": site_name, "rows": rows, "totals": {"m": tm, "h": th, "l": tl, "amt": tamt}, "rates": {"rm": rm, "rh": rh, "rl": rl}})
 
-                # Display Card
                 st.markdown(f"#### 📍 {site_name}")
                 k1, k2, k3, k4 = st.columns(4)
                 k1.metric("💰 Payable", f"₹{tamt:,.0f}")
@@ -360,16 +347,42 @@ def render_weekly_bill(df_entries, df_contractors):
                 except: 
                     pass
 
-# --- 5. LOGIN SYSTEM ---
+# --- 6. AUTO-LOGIN CHECK (Run before Login Page) ---
 if "logged_in" not in st.session_state:
     st.session_state.update({"logged_in": False, "phone": None, "role": None})
 
+# Check Cookie
+time.sleep(0.1) # Give cookie manager a split second
+stored_token = cookie_manager.get("auth_token")
+
+if not st.session_state["logged_in"] and stored_token:
+    try:
+        # Check if this token matches the one in DB
+        res = supabase.table("users").select("*").eq("session_token", stored_token).execute()
+        
+        if res.data:
+            user = res.data[0]
+            st.session_state.update({
+                "logged_in": True, 
+                "phone": user["phone"], 
+                "role": user["role"], 
+                "user_name": user["name"],
+                "assigned_site": user.get("assigned_site", "All")
+            })
+            st.toast(f"Welcome back, {user['name']}!")
+        else:
+            # Token invalid or logged in elsewhere -> Clear cookie
+            cookie_manager.delete("auth_token")
+    except Exception as e:
+        pass
+
+# --- 7. LOGIN PROCESS ---
 def login_process():
     col1, col2, col3 = st.columns([1, 10, 1])
     with col2:
         st.markdown("<br><h1 style='text-align: center; color: black;'>🏗️ LabourPro</h1><p style='text-align: center; color: grey;'>Site Entry Portal</p><hr>", unsafe_allow_html=True)
         
-        # --- 1. TEAM LOGIN ---
+        # --- TEAM LOGIN ---
         st.subheader("👷 Team Login")
         with st.form("u_log"):
             ph = st.text_input("Enter Mobile Number", max_chars=10, placeholder="9876543210")
@@ -380,15 +393,24 @@ def login_process():
                         response = supabase.table("users").select("*").eq("phone", ph).execute()
                         
                         if not response.data:
-                            st.error("❌ User not found. Ask Admin to add you.")
+                            st.error("❌ User not found.")
                         else:
                             user = response.data[0]
-                            
                             if user.get("status") == "Resigned":
                                 st.error("⛔ Account Deactivated.")
                             elif user.get("role") == "admin":
                                 st.error("⚠️ Admins: Please use the 'Admin Login' below.")
                             else:
+                                # GENERATE NEW SESSION TOKEN
+                                new_token = str(uuid.uuid4())
+                                
+                                # 1. Update DB (This invalidates any old sessions elsewhere)
+                                supabase.table("users").update({"session_token": new_token}).eq("phone", ph).execute()
+                                
+                                # 2. Set Cookie (Expires in 30 days)
+                                cookie_manager.set("auth_token", new_token, expires_at=datetime.now() + timedelta(days=30))
+                                
+                                # 3. Set Session State
                                 st.session_state.update({
                                     "logged_in": True, 
                                     "phone": user["phone"], 
@@ -396,15 +418,17 @@ def login_process():
                                     "user_name": user["name"],
                                     "assigned_site": user.get("assigned_site", "All")
                                 })
+                                st.success("Logged In!")
+                                time.sleep(1) # Wait for cookie to set
                                 st.rerun()
                     except Exception as e:
-                        st.warning("⚠️ Connection is waking up. Please click Login again.")
+                        st.warning("⚠️ Connection error. Try again.")
                 else:
                     st.warning("Please enter a phone number.")
 
         st.markdown("<br>", unsafe_allow_html=True)
 
-        # --- 2. ADMIN LOGIN ---
+        # --- ADMIN LOGIN ---
         with st.expander("🔐 Admin Login"):
             with st.form("a_log"):
                 ph_a = st.text_input("Admin Mobile")
@@ -416,33 +440,52 @@ def login_process():
                             response = supabase.table("users").select("*").eq("phone", ph_a).execute()
                             
                             if response.data and response.data[0].get("role") == "admin":
+                                user = response.data[0]
+                                
+                                # GENERATE NEW TOKEN
+                                new_token = str(uuid.uuid4())
+                                supabase.table("users").update({"session_token": new_token}).eq("phone", ph_a).execute()
+                                cookie_manager.set("auth_token", new_token, expires_at=datetime.now() + timedelta(days=30))
+
                                 st.session_state.update({
                                     "logged_in": True, 
-                                    "phone": response.data[0]["phone"], 
-                                    "role": "admin",
-                                    "user_name": response.data[0]["name"]
+                                    "phone": user["phone"], 
+                                    "role": "admin", 
+                                    "user_name": user["name"]
                                 })
                                 st.success("✅ Admin Logged In")
+                                time.sleep(1)
                                 st.rerun()
                             else:
                                 st.error("❌ Not an Admin Account")
                         except Exception as e:
-                             st.warning("⚠️ Connection is waking up. Please click Login again.")
+                             st.warning("⚠️ Connection error.")
                     else:
                         st.error("❌ Wrong Password")
 
-# Run the Login Process
 if not st.session_state["logged_in"]:
     login_process()
     st.stop()
 
-# --- 6. MAIN APP LOGIC ---
+# --- 8. LOGOUT LOGIC ---
 with st.sidebar:
     st.info(f"Role: **{st.session_state['role'].upper()}**")
-    if st.button("Logout"): 
+    if st.button("Logout"):
+        # Clear DB token (optional, but cleaner)
+        if st.session_state.get("phone"):
+            try:
+                supabase.table("users").update({"session_token": None}).eq("phone", st.session_state["phone"]).execute()
+            except: 
+                pass
+        
+        # Clear Cookie
+        cookie_manager.delete("auth_token")
+        
+        # Clear State
         st.session_state.clear()
         st.rerun()
 
+# --- 9. MAIN APP NAVIGATION ---
 tabs = ["📝 Daily Entry"]
 if st.session_state["role"] == "admin": 
     tabs += ["🔍 Site Logs", "📊 Weekly Bill", "📍 Sites", "👷 Contractors", "👥 Users", "📂 Archive & Recovery"]
