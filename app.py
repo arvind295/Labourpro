@@ -43,7 +43,6 @@ except Exception:
     st.stop()
 
 # --- 3. SESSION & COOKIE MANAGER ---
-# We do NOT cache this because it mounts a component (widget)
 def get_manager():
     return stx.CookieManager()
 
@@ -347,7 +346,7 @@ def render_weekly_bill(df_entries, df_contractors):
                 except: 
                     pass
 
-# --- 6. AUTO-LOGIN CHECK (Run before Login Page) ---
+# --- 6. AUTO-LOGIN CHECK ---
 if "logged_in" not in st.session_state:
     st.session_state.update({"logged_in": False, "phone": None, "role": None})
 
@@ -371,7 +370,6 @@ if not st.session_state["logged_in"] and stored_token:
             })
             st.toast(f"Welcome back, {user['name']}!")
         else:
-            # Token invalid or logged in elsewhere -> Clear cookie
             try:
                 cookie_manager.delete("auth_token")
             except KeyError:
@@ -389,9 +387,10 @@ def login_process():
         st.subheader("👷 Team Login")
         with st.form("u_log"):
             ph = st.text_input("Enter Mobile Number", max_chars=10, placeholder="9876543210")
+            pin = st.text_input("Enter 4-Digit PIN", type="password", max_chars=4, placeholder="****")
             
             if st.form_submit_button("🚀 Login", type="primary", use_container_width=True):
-                if ph:
+                if ph and pin:
                     try:
                         response = supabase.table("users").select("*").eq("phone", ph).execute()
                         
@@ -399,7 +398,14 @@ def login_process():
                             st.error("❌ User not found.")
                         else:
                             user = response.data[0]
-                            if user.get("status") == "Resigned":
+                            
+                            # CHECK PIN
+                            user_mpin = user.get("mpin", "1234")
+                            if user_mpin is None: user_mpin = "1234"
+                            
+                            if str(pin) != str(user_mpin):
+                                st.error("❌ Incorrect PIN")
+                            elif user.get("status") == "Resigned":
                                 st.error("⛔ Account Deactivated.")
                             elif user.get("role") == "admin":
                                 st.error("⚠️ Admins: Please use the 'Admin Login' below.")
@@ -407,7 +413,7 @@ def login_process():
                                 # GENERATE NEW SESSION TOKEN
                                 new_token = str(uuid.uuid4())
                                 
-                                # 1. Update DB (This invalidates any old sessions elsewhere)
+                                # 1. Update DB (Single Device Enforcement)
                                 supabase.table("users").update({"session_token": new_token}).eq("phone", ph).execute()
                                 
                                 # 2. Set Cookie (Expires in 30 days)
@@ -422,12 +428,12 @@ def login_process():
                                     "assigned_site": user.get("assigned_site", "All")
                                 })
                                 st.success("Logged In!")
-                                time.sleep(1) # Wait for cookie to set
+                                time.sleep(1)
                                 st.rerun()
                     except Exception as e:
                         st.warning("⚠️ Connection error. Try again.")
                 else:
-                    st.warning("Please enter a phone number.")
+                    st.warning("Please enter Phone and PIN.")
 
         st.markdown("<br>", unsafe_allow_html=True)
 
@@ -445,7 +451,6 @@ def login_process():
                             if response.data and response.data[0].get("role") == "admin":
                                 user = response.data[0]
                                 
-                                # GENERATE NEW TOKEN
                                 new_token = str(uuid.uuid4())
                                 supabase.table("users").update({"session_token": new_token}).eq("phone", ph_a).execute()
                                 cookie_manager.set("auth_token", new_token, expires_at=datetime.now() + timedelta(days=30))
@@ -470,30 +475,37 @@ if not st.session_state["logged_in"]:
     login_process()
     st.stop()
 
-# --- 8. LOGOUT LOGIC (FIXED) ---
+# --- 8. SIDEBAR LOGOUT & SETTINGS ---
 with st.sidebar:
     st.info(f"Role: **{st.session_state['role'].upper()}**")
+    
+    # --- CHANGE PIN SECTION (New) ---
+    with st.expander("🔐 Change My PIN"):
+        new_pin = st.text_input("New 4-Digit PIN", max_chars=4, type="password", key="new_u_pin")
+        if st.button("Update PIN"):
+            if len(new_pin) == 4 and new_pin.isdigit():
+                try:
+                    supabase.table("users").update({"mpin": new_pin}).eq("phone", st.session_state["phone"]).execute()
+                    st.success("PIN Updated!")
+                except:
+                    st.error("Error updating PIN.")
+            else:
+                st.error("PIN must be 4 digits.")
+
+    st.divider()
+
     if st.button("Logout"):
-        # 1. Clear DB token first (Crucial for Sync)
         if st.session_state.get("phone"):
             try:
                 supabase.table("users").update({"session_token": None}).eq("phone", st.session_state["phone"]).execute()
             except: 
                 pass
-        
-        # 2. Delete Cookie (Wrapped in Try/Except to prevent KeyError)
         try:
             cookie_manager.delete("auth_token")
         except KeyError:
-            pass # Cookie already gone, safe to proceed
-        
-        # 3. Clear State
+            pass
         st.session_state.clear()
-        
-        # 4. Wait for browser to process deletion
         time.sleep(1)
-        
-        # 5. Rerun
         st.rerun()
 
 # --- 9. MAIN APP NAVIGATION ---
@@ -751,6 +763,10 @@ elif current_tab == "👥 Users":
         all_sites = fetch_data("sites")["name"].tolist()
         asites = c_u4.multiselect("Assigned Sites", all_sites)
         
+        # --- NEW PIN ASSIGNMENT FIELD ---
+        c_u5 = st.columns(1)[0]
+        mpin = c_u5.text_input("Assign 4-Digit PIN", max_chars=4, value="1234")
+        
         if st.form_submit_button("Save User"):
             site_str = ", ".join(asites) if asites else "None/All"
             
@@ -759,7 +775,8 @@ elif current_tab == "👥 Users":
                 supabase.table("users").update({
                     "name": nm, 
                     "role": rl, 
-                    "assigned_site": site_str
+                    "assigned_site": site_str,
+                    "mpin": mpin
                 }).eq("phone", ph).execute()
             else:
                 supabase.table("users").insert({
@@ -767,7 +784,8 @@ elif current_tab == "👥 Users":
                     "name": nm, 
                     "role": rl, 
                     "assigned_site": site_str, 
-                    "status": "Active"
+                    "status": "Active",
+                    "mpin": mpin
                 }).execute()
             st.success("User Saved!")
             st.rerun()
