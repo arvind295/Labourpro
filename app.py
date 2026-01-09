@@ -43,7 +43,6 @@ except Exception:
     st.stop()
 
 # --- 3. SESSION & COOKIE MANAGER ---
-# We do NOT cache this because it mounts a component (widget)
 def get_manager():
     return stx.CookieManager()
 
@@ -195,15 +194,13 @@ def render_weekly_bill(df_entries, df_contractors):
         return
     
     # 1. FILTER FOR USERS (Restrict to Assigned Sites)
-    # Check if the logged in person is NOT an admin
     is_admin = (st.session_state["role"] == "admin")
     
     if not is_admin:
         assigned_raw = st.session_state.get("assigned_site", "")
-        # Parse the assigned sites
         if "All" not in assigned_raw and "None/All" not in assigned_raw:
             user_sites = [s.strip() for s in assigned_raw.split(",")]
-            # Filter the main DataFrame to only show these sites
+            # Filter the main DataFrame
             df_entries = df_entries[df_entries["site"].isin(user_sites)]
             
             if df_entries.empty: 
@@ -215,6 +212,10 @@ def render_weekly_bill(df_entries, df_contractors):
     df_contractors["effective_date"] = pd.to_datetime(df_contractors["effective_date"], errors='coerce').dt.date
     df_entries = df_entries.dropna(subset=["date_dt"])
     
+    if df_entries.empty:
+        st.info("No valid date entries found.")
+        return
+
     # 2. Calculate Billing Weeks
     df_entries["start_date"] = df_entries["date_dt"].dt.date.apply(get_billing_start_date)
     df_entries["end_date"] = df_entries["start_date"] + timedelta(days=6)
@@ -284,12 +285,11 @@ def render_weekly_bill(df_entries, df_contractors):
 
                 st.markdown(f"#### 👷 {con_name}")
                 
-                # --- HIDE AMOUNTS FOR USERS ---
                 if is_admin:
                     k1, k2, k3, k4 = st.columns(4)
                     k1.metric("💰 Payable", f"₹{tamt:,.0f}")
                 else:
-                    k2, k3, k4 = st.columns(3) # Only 3 columns if hidden
+                    k2, k3, k4 = st.columns(3)
                 
                 k2.metric("🧱 Masons", f"{tm}")
                 k3.metric("🛠️ Helpers", f"{th}")
@@ -298,7 +298,6 @@ def render_weekly_bill(df_entries, df_contractors):
                 with st.expander(f"📄 Details: {con_name}"):
                     st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
 
-            # --- RESTRICT PDF TO ADMIN ONLY ---
             if pdf_data and is_admin:
                 try:
                     pdf_bytes = generate_pdf_bytes(sel_site, sel_week, pdf_data)
@@ -355,7 +354,6 @@ def render_weekly_bill(df_entries, df_contractors):
 
                 st.markdown(f"#### 📍 {site_name}")
                 
-                # --- HIDE AMOUNTS FOR USERS ---
                 if is_admin:
                     k1, k2, k3, k4 = st.columns(4)
                     k1.metric("💰 Payable", f"₹{tamt:,.0f}")
@@ -376,19 +374,16 @@ def render_weekly_bill(df_entries, df_contractors):
                 except: 
                     pass
 
-# --- 6. AUTO-LOGIN CHECK (Run before Login Page) ---
+# --- 6. AUTO-LOGIN CHECK ---
 if "logged_in" not in st.session_state:
     st.session_state.update({"logged_in": False, "phone": None, "role": None})
 
-# Check Cookie
-time.sleep(0.1) # Give cookie manager a split second
+time.sleep(0.1)
 stored_token = cookie_manager.get("auth_token")
 
 if not st.session_state["logged_in"] and stored_token:
     try:
-        # Check if this token matches the one in DB
         res = supabase.table("users").select("*").eq("session_token", stored_token).execute()
-        
         if res.data:
             user = res.data[0]
             st.session_state.update({
@@ -400,7 +395,6 @@ if not st.session_state["logged_in"] and stored_token:
             })
             st.toast(f"Welcome back, {user['name']}!")
         else:
-            # Token invalid or logged in elsewhere -> Clear cookie
             try:
                 cookie_manager.delete("auth_token")
             except KeyError:
@@ -414,7 +408,6 @@ def login_process():
     with col2:
         st.markdown("<br><h1 style='text-align: center; color: black;'>🏗️ LabourPro</h1><p style='text-align: center; color: grey;'>Site Entry Portal</p><hr>", unsafe_allow_html=True)
         
-        # --- TEAM LOGIN ---
         st.subheader("👷 Team Login")
         with st.form("u_log"):
             ph = st.text_input("Enter Mobile Number", max_chars=10, placeholder="9876543210")
@@ -430,7 +423,6 @@ def login_process():
                         else:
                             user = response.data[0]
                             
-                            # CHECK PIN
                             user_mpin = user.get("mpin", "1234")
                             if user_mpin is None: user_mpin = "1234"
                             
@@ -441,16 +433,10 @@ def login_process():
                             elif user.get("role") == "admin":
                                 st.error("⚠️ Admins: Please use the 'Admin Login' below.")
                             else:
-                                # GENERATE NEW SESSION TOKEN
                                 new_token = str(uuid.uuid4())
-                                
-                                # 1. Update DB (Single Device Enforcement)
                                 supabase.table("users").update({"session_token": new_token}).eq("phone", ph).execute()
-                                
-                                # 2. Set Cookie (Expires in 30 days)
                                 cookie_manager.set("auth_token", new_token, expires_at=datetime.now() + timedelta(days=30))
                                 
-                                # 3. Set Session State
                                 st.session_state.update({
                                     "logged_in": True, 
                                     "phone": user["phone"], 
@@ -468,7 +454,6 @@ def login_process():
 
         st.markdown("<br>", unsafe_allow_html=True)
 
-        # --- ADMIN LOGIN ---
         with st.expander("🔐 Admin Login"):
             with st.form("a_log"):
                 ph_a = st.text_input("Admin Mobile")
@@ -481,8 +466,6 @@ def login_process():
                             
                             if response.data and response.data[0].get("role") == "admin":
                                 user = response.data[0]
-                                
-                                # GENERATE NEW TOKEN
                                 new_token = str(uuid.uuid4())
                                 supabase.table("users").update({"session_token": new_token}).eq("phone", ph_a).execute()
                                 cookie_manager.set("auth_token", new_token, expires_at=datetime.now() + timedelta(days=30))
@@ -511,8 +494,6 @@ if not st.session_state["logged_in"]:
 with st.sidebar:
     st.info(f"Role: **{st.session_state['role'].upper()}**")
     
-    # --- CHANGE PIN SECTION (ONLY FOR USERS) ---
-    # RESTRICTION: Admin cannot see this
     if st.session_state["role"] == "user":
         with st.expander("🔐 Change My PIN"):
             new_pin = st.text_input("New 4-Digit PIN", max_chars=4, type="password", key="new_u_pin")
@@ -529,29 +510,21 @@ with st.sidebar:
     st.divider()
 
     if st.button("Logout"):
-        # 1. Clear DB token first
         if st.session_state.get("phone"):
             try:
                 supabase.table("users").update({"session_token": None}).eq("phone", st.session_state["phone"]).execute()
             except: 
                 pass
-        
-        # 2. Delete Cookie
         try:
             cookie_manager.delete("auth_token")
         except KeyError:
-            pass # Cookie already gone
-        
-        # 3. Clear State
+            pass
         st.session_state.clear()
         time.sleep(1)
         st.rerun()
 
 # --- 9. MAIN APP NAVIGATION ---
-# ALLOW USERS TO SEE WEEKLY BILL
 tabs = ["📝 Daily Entry", "📊 Weekly Bill"]
-
-# ADMIN gets extra tabs
 if st.session_state["role"] == "admin": 
     tabs += ["🔍 Site Logs", "📍 Sites", "👷 Contractors", "👥 Users", "📂 Archive & Recovery"]
 
@@ -568,7 +541,6 @@ if current_tab == "📝 Daily Entry":
     else:
         av_sites = df_sites["name"].unique().tolist()
         
-        # LOGIC FOR MULTIPLE ASSIGNED SITES
         if st.session_state["role"] != "admin":
             u = supabase.table("users").select("assigned_site").eq("phone", st.session_state["phone"]).single().execute()
             if u.data and u.data.get("assigned_site"):
@@ -612,7 +584,6 @@ if current_tab == "📝 Daily Entry":
                 mode = "edit"
                 st.warning("✏️ Editing Entry")
             
-            # NIL ENTRY LOGIC
             is_nil_default = False
             if exist and exist.get("count_mason") == 0 and exist.get("count_helper") == 0 and exist.get("count_ladies") == 0:
                 is_nil_default = True
@@ -690,15 +661,14 @@ if current_tab == "📝 Daily Entry":
         except: 
             pass
 
-# TAB 3: BILLING (NOW ACCESSIBLE TO USERS)
+# TAB 3: BILLING (USERS ALLOWED)
 elif current_tab == "📊 Weekly Bill":
     st.subheader("📊 Weekly Bill")
     try:
-        start_of_year = f"{date.today().year}-01-01"
-        response = supabase.table("entries").select("*").gte("date", start_of_year).execute()
-        df_entries = pd.DataFrame(response.data)
-    except:
+        # Changed: Fetch ALL data to fix "No Data" issue caused by strict year filtering
         df_entries = fetch_data("entries")
+    except:
+        df_entries = pd.DataFrame()
         
     render_weekly_bill(df_entries, fetch_data("contractors"))
 
@@ -708,7 +678,7 @@ elif current_tab == "🔍 Site Logs":
     response = supabase.table("entries").select("*").order("date", desc=True).limit(500).execute()
     df_e = pd.DataFrame(response.data)
     
-    st.caption("Showing last 500 entries only. Use 'Weekly Bill' for full history.")
+    st.caption("Showing last 500 entries.")
     
     if not df_e.empty:
         df_e["date_obj"] = pd.to_datetime(df_e["date"], errors='coerce')
@@ -804,14 +774,12 @@ elif current_tab == "👥 Users":
         all_sites = fetch_data("sites")["name"].tolist()
         asites = c_u4.multiselect("Assigned Sites", all_sites)
         
-        # --- NEW PIN ASSIGNMENT FIELD ---
         c_u5 = st.columns(1)[0]
         mpin = c_u5.text_input("Assign 4-Digit PIN", max_chars=4, value="1234")
         
         if st.form_submit_button("Save User"):
             site_str = ", ".join(asites) if asites else "None/All"
             
-            # Check if user exists
             if supabase.table("users").select("*").eq("phone", ph).execute().data:
                 supabase.table("users").update({
                     "name": nm, 
