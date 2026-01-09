@@ -43,6 +43,7 @@ except Exception:
     st.stop()
 
 # --- 3. SESSION & COOKIE MANAGER ---
+# We do NOT cache this because it mounts a component (widget)
 def get_manager():
     return stx.CookieManager()
 
@@ -193,7 +194,23 @@ def render_weekly_bill(df_entries, df_contractors):
         st.info("No data available.")
         return
     
-    # 1. Prepare Data
+    # 1. FILTER FOR USERS (Restrict to Assigned Sites)
+    # Check if the logged in person is NOT an admin
+    is_admin = (st.session_state["role"] == "admin")
+    
+    if not is_admin:
+        assigned_raw = st.session_state.get("assigned_site", "")
+        # Parse the assigned sites
+        if "All" not in assigned_raw and "None/All" not in assigned_raw:
+            user_sites = [s.strip() for s in assigned_raw.split(",")]
+            # Filter the main DataFrame to only show these sites
+            df_entries = df_entries[df_entries["site"].isin(user_sites)]
+            
+            if df_entries.empty: 
+                st.warning("No data found for your assigned sites.")
+                return
+
+    # 2. Prepare Data
     df_entries["date_dt"] = pd.to_datetime(df_entries["date"], errors='coerce')
     df_contractors["effective_date"] = pd.to_datetime(df_contractors["effective_date"], errors='coerce').dt.date
     df_entries = df_entries.dropna(subset=["date_dt"])
@@ -266,8 +283,14 @@ def render_weekly_bill(df_entries, df_contractors):
                 pdf_data.append({"name": con_name, "rows": rows, "totals": {"m": tm, "h": th, "l": tl, "amt": tamt}, "rates": {"rm": rm, "rh": rh, "rl": rl}})
 
                 st.markdown(f"#### 👷 {con_name}")
-                k1, k2, k3, k4 = st.columns(4)
-                k1.metric("💰 Payable", f"₹{tamt:,.0f}")
+                
+                # --- HIDE AMOUNTS FOR USERS ---
+                if is_admin:
+                    k1, k2, k3, k4 = st.columns(4)
+                    k1.metric("💰 Payable", f"₹{tamt:,.0f}")
+                else:
+                    k2, k3, k4 = st.columns(3) # Only 3 columns if hidden
+                
                 k2.metric("🧱 Masons", f"{tm}")
                 k3.metric("🛠️ Helpers", f"{th}")
                 k4.metric("👩 Ladies", f"{tl}")
@@ -275,7 +298,8 @@ def render_weekly_bill(df_entries, df_contractors):
                 with st.expander(f"📄 Details: {con_name}"):
                     st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
 
-            if pdf_data:
+            # --- RESTRICT PDF TO ADMIN ONLY ---
+            if pdf_data and is_admin:
                 try:
                     pdf_bytes = generate_pdf_bytes(sel_site, sel_week, pdf_data)
                     st.download_button(f"⬇️ PDF ({sel_site})", pdf_bytes, f"Bill_{sel_site}.pdf", "application/pdf")
@@ -330,8 +354,14 @@ def render_weekly_bill(df_entries, df_contractors):
                 pdf_data.append({"name": site_name, "rows": rows, "totals": {"m": tm, "h": th, "l": tl, "amt": tamt}, "rates": {"rm": rm, "rh": rh, "rl": rl}})
 
                 st.markdown(f"#### 📍 {site_name}")
-                k1, k2, k3, k4 = st.columns(4)
-                k1.metric("💰 Payable", f"₹{tamt:,.0f}")
+                
+                # --- HIDE AMOUNTS FOR USERS ---
+                if is_admin:
+                    k1, k2, k3, k4 = st.columns(4)
+                    k1.metric("💰 Payable", f"₹{tamt:,.0f}")
+                else:
+                    k2, k3, k4 = st.columns(3)
+
                 k2.metric("🧱 Masons", f"{tm}")
                 k3.metric("🛠️ Helpers", f"{th}")
                 k4.metric("👩 Ladies", f"{tl}")
@@ -339,14 +369,14 @@ def render_weekly_bill(df_entries, df_contractors):
                 with st.expander(f"📄 Details: {site_name}"):
                     st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
 
-            if pdf_data:
+            if pdf_data and is_admin:
                 try:
                     pdf_bytes = generate_pdf_bytes(sel_con, sel_week, pdf_data)
                     st.download_button(f"⬇️ PDF ({sel_con})", pdf_bytes, f"Bill_{sel_con}.pdf", "application/pdf")
                 except: 
                     pass
 
-# --- 6. AUTO-LOGIN CHECK ---
+# --- 6. AUTO-LOGIN CHECK (Run before Login Page) ---
 if "logged_in" not in st.session_state:
     st.session_state.update({"logged_in": False, "phone": None, "role": None})
 
@@ -370,6 +400,7 @@ if not st.session_state["logged_in"] and stored_token:
             })
             st.toast(f"Welcome back, {user['name']}!")
         else:
+            # Token invalid or logged in elsewhere -> Clear cookie
             try:
                 cookie_manager.delete("auth_token")
             except KeyError:
@@ -451,6 +482,7 @@ def login_process():
                             if response.data and response.data[0].get("role") == "admin":
                                 user = response.data[0]
                                 
+                                # GENERATE NEW TOKEN
                                 new_token = str(uuid.uuid4())
                                 supabase.table("users").update({"session_token": new_token}).eq("phone", ph_a).execute()
                                 cookie_manager.set("auth_token", new_token, expires_at=datetime.now() + timedelta(days=30))
@@ -479,39 +511,49 @@ if not st.session_state["logged_in"]:
 with st.sidebar:
     st.info(f"Role: **{st.session_state['role'].upper()}**")
     
-    # --- CHANGE PIN SECTION (New) ---
-    with st.expander("🔐 Change My PIN"):
-        new_pin = st.text_input("New 4-Digit PIN", max_chars=4, type="password", key="new_u_pin")
-        if st.button("Update PIN"):
-            if len(new_pin) == 4 and new_pin.isdigit():
-                try:
-                    supabase.table("users").update({"mpin": new_pin}).eq("phone", st.session_state["phone"]).execute()
-                    st.success("PIN Updated!")
-                except:
-                    st.error("Error updating PIN.")
-            else:
-                st.error("PIN must be 4 digits.")
+    # --- CHANGE PIN SECTION (ONLY FOR USERS) ---
+    # RESTRICTION: Admin cannot see this
+    if st.session_state["role"] == "user":
+        with st.expander("🔐 Change My PIN"):
+            new_pin = st.text_input("New 4-Digit PIN", max_chars=4, type="password", key="new_u_pin")
+            if st.button("Update PIN"):
+                if len(new_pin) == 4 and new_pin.isdigit():
+                    try:
+                        supabase.table("users").update({"mpin": new_pin}).eq("phone", st.session_state["phone"]).execute()
+                        st.success("PIN Updated!")
+                    except:
+                        st.error("Error updating PIN.")
+                else:
+                    st.error("PIN must be 4 digits.")
 
     st.divider()
 
     if st.button("Logout"):
+        # 1. Clear DB token first
         if st.session_state.get("phone"):
             try:
                 supabase.table("users").update({"session_token": None}).eq("phone", st.session_state["phone"]).execute()
             except: 
                 pass
+        
+        # 2. Delete Cookie
         try:
             cookie_manager.delete("auth_token")
         except KeyError:
-            pass
+            pass # Cookie already gone
+        
+        # 3. Clear State
         st.session_state.clear()
         time.sleep(1)
         st.rerun()
 
 # --- 9. MAIN APP NAVIGATION ---
-tabs = ["📝 Daily Entry"]
+# ALLOW USERS TO SEE WEEKLY BILL
+tabs = ["📝 Daily Entry", "📊 Weekly Bill"]
+
+# ADMIN gets extra tabs
 if st.session_state["role"] == "admin": 
-    tabs += ["🔍 Site Logs", "📊 Weekly Bill", "📍 Sites", "👷 Contractors", "👥 Users", "📂 Archive & Recovery"]
+    tabs += ["🔍 Site Logs", "📍 Sites", "👷 Contractors", "👥 Users", "📂 Archive & Recovery"]
 
 current_tab = st.selectbox("Navigate", tabs, label_visibility="collapsed")
 st.divider()
@@ -648,7 +690,19 @@ if current_tab == "📝 Daily Entry":
         except: 
             pass
 
-# TAB 2: SITE LOGS
+# TAB 3: BILLING (NOW ACCESSIBLE TO USERS)
+elif current_tab == "📊 Weekly Bill":
+    st.subheader("📊 Weekly Bill")
+    try:
+        start_of_year = f"{date.today().year}-01-01"
+        response = supabase.table("entries").select("*").gte("date", start_of_year).execute()
+        df_entries = pd.DataFrame(response.data)
+    except:
+        df_entries = fetch_data("entries")
+        
+    render_weekly_bill(df_entries, fetch_data("contractors"))
+
+# TAB 2: SITE LOGS (ADMIN ONLY)
 elif current_tab == "🔍 Site Logs":
     st.subheader("🔍 Site Logs")
     response = supabase.table("entries").select("*").order("date", desc=True).limit(500).execute()
@@ -667,36 +721,23 @@ elif current_tab == "🔍 Site Logs":
             
         st.dataframe(df_e[["id", "Date", "site", "contractor", "count_mason", "count_helper", "count_ladies", "total_cost", "work_description"]], use_container_width=True, hide_index=True)
         
-        if st.session_state["role"] == "admin":
-            st.divider()
-            with st.expander("🗑️ Delete Entry"):
-                col_d1, col_d2 = st.columns([1, 2])
-                del_id = col_d1.number_input("ID to Delete", step=1, value=0)
-                del_code = col_d2.text_input("Security Code", type="password")
-                
-                if st.button("Delete Permanently", type="primary"):
-                    if del_code == ADMIN_DELETE_CODE:
-                        supabase.table("entries").delete().eq("id", int(del_id)).execute()
-                        st.success("Deleted")
-                        st.rerun()
-                    else: 
-                        st.error("Wrong Code")
+        st.divider()
+        with st.expander("🗑️ Delete Entry"):
+            col_d1, col_d2 = st.columns([1, 2])
+            del_id = col_d1.number_input("ID to Delete", step=1, value=0)
+            del_code = col_d2.text_input("Security Code", type="password")
+            
+            if st.button("Delete Permanently", type="primary"):
+                if del_code == ADMIN_DELETE_CODE:
+                    supabase.table("entries").delete().eq("id", int(del_id)).execute()
+                    st.success("Deleted")
+                    st.rerun()
+                else: 
+                    st.error("Wrong Code")
     else: 
         st.info("No logs.")
 
-# TAB 3: BILLING
-elif current_tab == "📊 Weekly Bill":
-    st.subheader("📊 Weekly Bill")
-    try:
-        start_of_year = f"{date.today().year}-01-01"
-        response = supabase.table("entries").select("*").gte("date", start_of_year).execute()
-        df_entries = pd.DataFrame(response.data)
-    except:
-        df_entries = fetch_data("entries")
-        
-    render_weekly_bill(df_entries, fetch_data("contractors"))
-
-# TAB 4: SITE MANAGEMENT
+# TAB 4: SITE MANAGEMENT (ADMIN ONLY)
 elif current_tab == "📍 Sites":
     st.subheader("📍 Sites")
     st.dataframe(fetch_data("sites"), hide_index=True, use_container_width=True)
@@ -720,7 +761,7 @@ elif current_tab == "📍 Sites":
              st.success("Deleted")
              st.rerun()
 
-# TAB 5: CONTRACTORS
+# TAB 5: CONTRACTORS (ADMIN ONLY)
 elif current_tab == "👷 Contractors":
     st.subheader("Contractor Rates")
     df_c = fetch_data("contractors")
@@ -747,7 +788,7 @@ elif current_tab == "👷 Contractors":
             st.success("Saved")
             st.rerun()
 
-# TAB 6: USERS
+# TAB 6: USERS (ADMIN ONLY)
 elif current_tab == "👥 Users":
     st.subheader("Users")
     st.dataframe(fetch_data("users"), use_container_width=True)
@@ -812,7 +853,7 @@ elif current_tab == "👥 Users":
                 else: 
                     st.error("⚠️ Wrong Security Code.")
 
-# TAB 7: ARCHIVE & RECOVERY
+# TAB 7: ARCHIVE & RECOVERY (ADMIN ONLY)
 elif current_tab == "📂 Archive & Recovery":
     st.subheader("Recovery Zone")
     t1, t2, t3 = st.tabs(["Reset Data", "View Archives (Offline)", "Restore Data"])
