@@ -2,9 +2,18 @@ name: Daily Database Backup
 
 on:
   schedule:
-    # Runs at 00:00 UTC every day
-    - cron: '15 2 * * *'
-  # Allows you to run it manually from the Actions tab for testing
+    # -------------------------------------------------------
+    # CHANGED TIME: Runs at 02:30 AM UTC (IST 8:00 AM approx)
+    # This avoids the "Midnight Traffic Jam"
+    # -------------------------------------------------------
+    - cron: '30 2 * * *'
+  
+  # This makes it run immediately when you save this file
+  # helping "register" the new timer instantly.
+  push:
+    branches:
+      - main
+      
   workflow_dispatch:
 
 jobs:
