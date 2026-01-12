@@ -3,7 +3,7 @@ name: Daily Database Backup
 on:
   schedule:
     # Runs at 00:00 UTC every day
-    - cron: '0 0 * * *'
+    - cron: '15 2 * * *'
   # Allows you to run it manually from the Actions tab for testing
   workflow_dispatch:
 
