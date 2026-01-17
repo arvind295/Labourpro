@@ -241,7 +241,7 @@ def render_weekly_bill(df_entries, df_contractors):
     # --- TAB 1: SITE VIEW ---
     with tab_site:
         all_sites = sorted(df_week["site"].unique())
-        sel_site = st.selectbox("Select Site", all_sites, key="sb_site")
+        sel_site = st.pills("Select Site", all_sites, key="sb_site", default=all_sites[0] if all_sites else None)
         
         if sel_site:
             st.divider()
@@ -254,39 +254,47 @@ def render_weekly_bill(df_entries, df_contractors):
                 df_sub = df_view[df_view["contractor"] == con_name]
                 entry_map = {d.date(): r for d, r in zip(df_sub["date_dt"], df_sub.to_dict('records'))}
                 
+                # --- NEW STEP: Fetch Rates BEFORE the loop ---
+                # We do this first so we can use the NEW rates to calculate the total
+                rates = df_contractors[df_contractors["name"] == con_name].sort_values("effective_date", ascending=False)
+                rm, rh, rl = 0, 0, 0
+                if not rates.empty:
+                    valid_rates = rates[rates["effective_date"] <= week_start_obj]
+                    curr = valid_rates.iloc[0] if not valid_rates.empty else rates.iloc[0]
+                    rm, rh, rl = curr["rate_mason"], curr["rate_helper"], curr["rate_ladies"]
+
                 rows = []
                 tm, th, tl, tamt = 0, 0, 0, 0
                 
                 for day_date in full_week_dates:
                     if day_date in entry_map:
                         r = entry_map[day_date]
-                        m, h, l, c = r["count_mason"], r["count_helper"], r["count_ladies"], r["total_cost"]
+                        m, h, l = r["count_mason"], r["count_helper"], r["count_ladies"]
+                        
+                        # --- FIX: Calculate Cost Dynamically ---
+                        # Instead of using r["total_cost"] (old saved data), we calculate it fresh:
+                        current_daily_cost = (m * rm) + (h * rh) + (l * rl)
                         
                         if m == 0 and h == 0 and l == 0:
                             dm, dh, dl = "Nil", "Nil", "Nil"
                         else:
                             dm, dh, dl = str(m), str(h), str(l)
                     else:
-                        m, h, l, c = 0, 0, 0, 0
+                        m, h, l, current_daily_cost = 0, 0, 0, 0
                         dm, dh, dl = "0", "0", "0"
                     
                     rows.append({"Date": day_date.strftime("%d-%m-%Y"), "Mason": dm, "Helper": dh, "Ladies": dl})
                     tm += m
                     th += h
                     tl += l
-                    tamt += c
-                
-                rates = df_contractors[df_contractors["name"] == con_name].sort_values("effective_date", ascending=False)
-                rm, rh, rl = (0,0,0)
-                if not rates.empty:
-                    valid_rates = rates[rates["effective_date"] <= week_start_obj]
-                    curr = valid_rates.iloc[0] if not valid_rates.empty else rates.iloc[0]
-                    rm, rh, rl = curr["rate_mason"], curr["rate_helper"], curr["rate_ladies"]
+                    tamt += current_daily_cost  # Add the FRESH calculated cost
+
+                # (The old rate fetching code was here - we moved it to the top)
 
                 pdf_data.append({"name": con_name, "rows": rows, "totals": {"m": tm, "h": th, "l": tl, "amt": tamt}, "rates": {"rm": rm, "rh": rh, "rl": rl}})
 
                 st.markdown(f"#### 👷 {con_name}")
-                
+                # ... rest of the display code remains the same ...
                 if is_admin:
                     k1, k2, k3, k4 = st.columns(4)
                     k1.metric("💰 Payable", f"₹{tamt:,.0f}")
@@ -323,39 +331,46 @@ def render_weekly_bill(df_entries, df_contractors):
                 df_sub = df_view[df_view["site"] == site_name]
                 entry_map = {d.date(): r for d, r in zip(df_sub["date_dt"], df_sub.to_dict('records'))}
                 
+                # --- NEW STEP: Fetch Rates BEFORE the loop ---
+                # Note: We use 'sel_con' here because we are in the Contractor Tab
+                rates = df_contractors[df_contractors["name"] == sel_con].sort_values("effective_date", ascending=False)
+                rm, rh, rl = 0, 0, 0
+                if not rates.empty:
+                    valid_rates = rates[rates["effective_date"] <= week_start_obj]
+                    curr = valid_rates.iloc[0] if not valid_rates.empty else rates.iloc[0]
+                    rm, rh, rl = curr["rate_mason"], curr["rate_helper"], curr["rate_ladies"]
+
                 rows = []
                 tm, th, tl, tamt = 0, 0, 0, 0
                 
                 for day_date in full_week_dates:
                     if day_date in entry_map:
                         r = entry_map[day_date]
-                        m, h, l, c = r["count_mason"], r["count_helper"], r["count_ladies"], r["total_cost"]
+                        m, h, l = r["count_mason"], r["count_helper"], r["count_ladies"]
                         
+                        # --- FIX: Calculate Cost Dynamically ---
+                        current_daily_cost = (m * rm) + (h * rh) + (l * rl)
+
                         if m == 0 and h == 0 and l == 0:
                             dm, dh, dl = "Nil", "Nil", "Nil"
                         else:
                             dm, dh, dl = str(m), str(h), str(l)
                     else:
-                        m, h, l, c = 0, 0, 0, 0
+                        m, h, l, current_daily_cost = 0, 0, 0, 0
                         dm, dh, dl = "0", "0", "0"
                     
                     rows.append({"Date": day_date.strftime("%d-%m-%Y"), "Mason": dm, "Helper": dh, "Ladies": dl})
                     tm += m
                     th += h
                     tl += l
-                    tamt += c
-                
-                rates = df_contractors[df_contractors["name"] == sel_con].sort_values("effective_date", ascending=False)
-                rm, rh, rl = (0,0,0)
-                if not rates.empty:
-                    valid_rates = rates[rates["effective_date"] <= week_start_obj]
-                    curr = valid_rates.iloc[0] if not valid_rates.empty else rates.iloc[0]
-                    rm, rh, rl = curr["rate_mason"], curr["rate_helper"], curr["rate_ladies"]
+                    tamt += current_daily_cost # Add FRESH cost
 
+                # (The old rate fetching code was here - we moved it to the top)
+                
                 pdf_data.append({"name": site_name, "rows": rows, "totals": {"m": tm, "h": th, "l": tl, "amt": tamt}, "rates": {"rm": rm, "rh": rh, "rl": rl}})
 
                 st.markdown(f"#### 📍 {site_name}")
-                
+                # ... rest of the display code remains the same ...
                 if is_admin:
                     k1, k2, k3, k4 = st.columns(4)
                     k1.metric("💰 Payable", f"₹{tamt:,.0f}")
