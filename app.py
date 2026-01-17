@@ -221,8 +221,10 @@ def render_weekly_bill(df_entries, df_contractors):
     df_entries["end_date"] = df_entries["start_date"] + timedelta(days=6)
     df_entries["week_label"] = df_entries.apply(lambda x: f"{x['start_date'].strftime('%d-%m-%Y')} to {x['end_date'].strftime('%d-%m-%Y')}", axis=1)
     
-    # 3. Week Selector
-    weeks = sorted(df_entries["week_label"].unique(), reverse=True)
+    # 3. Week Selector (FIXED: Sorts by actual date, not text)
+    unique_weeks = df_entries[["start_date", "week_label"]].drop_duplicates().sort_values("start_date", ascending=False)
+    weeks = unique_weeks["week_label"].tolist()
+    
     sel_week = st.selectbox("Select Week", weeks) if weeks else None
     
     if not sel_week: 
