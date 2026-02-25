@@ -216,12 +216,12 @@ def render_weekly_bill(df_entries, df_contractors):
         st.info("No valid date entries found.")
         return
 
-    # 2. Calculate Billing Weeks
+    # 3. Calculate Billing Weeks
     df_entries["start_date"] = df_entries["date_dt"].dt.date.apply(get_billing_start_date)
     df_entries["end_date"] = df_entries["start_date"] + timedelta(days=6)
     df_entries["week_label"] = df_entries.apply(lambda x: f"{x['start_date'].strftime('%d-%m-%Y')} to {x['end_date'].strftime('%d-%m-%Y')}", axis=1)
     
-    # 3. Week Selector (FIXED: Sorts by actual date, not text)
+    # 4. Week Selector (Sorts by actual date)
     unique_weeks = df_entries[["start_date", "week_label"]].drop_duplicates().sort_values("start_date", ascending=False)
     weeks = unique_weeks["week_label"].tolist()
     
@@ -235,7 +235,13 @@ def render_weekly_bill(df_entries, df_contractors):
     week_start_obj = df_week.iloc[0]["start_date"]
     full_week_dates = [week_start_obj + timedelta(days=i) for i in range(7)] 
     
-    # 4. Independent Tabs
+    # --- NEW FEATURE: EXCEL/CSV EXPORT ---
+    if is_admin:
+        csv_data = df_week.to_csv(index=False).encode('utf-8')
+        st.download_button(f"📊 Download {sel_week} (Excel/CSV)", csv_data, f"Data_{sel_week}.csv", "text/csv")
+        st.divider()
+
+    # 5. Independent Tabs
     tab_site, tab_con = st.tabs(["🏢 View by Site", "👷 View by Contractor"])
     
     # --- TAB 1: SITE VIEW ---
@@ -254,8 +260,7 @@ def render_weekly_bill(df_entries, df_contractors):
                 df_sub = df_view[df_view["contractor"] == con_name]
                 entry_map = {d.date(): r for d, r in zip(df_sub["date_dt"], df_sub.to_dict('records'))}
                 
-                # --- NEW STEP: Fetch Rates BEFORE the loop ---
-                # We do this first so we can use the NEW rates to calculate the total
+                # --- FETCH RATES BEFORE LOOP ---
                 rates = df_contractors[df_contractors["name"] == con_name].sort_values("effective_date", ascending=False)
                 rm, rh, rl = 0, 0, 0
                 if not rates.empty:
@@ -271,8 +276,7 @@ def render_weekly_bill(df_entries, df_contractors):
                         r = entry_map[day_date]
                         m, h, l = r["count_mason"], r["count_helper"], r["count_ladies"]
                         
-                        # --- FIX: Calculate Cost Dynamically ---
-                        # Instead of using r["total_cost"] (old saved data), we calculate it fresh:
+                        # Calculate Cost Dynamically
                         current_daily_cost = (m * rm) + (h * rh) + (l * rl)
                         
                         if m == 0 and h == 0 and l == 0:
@@ -287,14 +291,11 @@ def render_weekly_bill(df_entries, df_contractors):
                     tm += m
                     th += h
                     tl += l
-                    tamt += current_daily_cost  # Add the FRESH calculated cost
-
-                # (The old rate fetching code was here - we moved it to the top)
+                    tamt += current_daily_cost  
 
                 pdf_data.append({"name": con_name, "rows": rows, "totals": {"m": tm, "h": th, "l": tl, "amt": tamt}, "rates": {"rm": rm, "rh": rh, "rl": rl}})
 
                 st.markdown(f"#### 👷 {con_name}")
-                # ... rest of the display code remains the same ...
                 if is_admin:
                     k1, k2, k3, k4 = st.columns(4)
                     k1.metric("💰 Payable", f"₹{tamt:,.0f}")
@@ -318,7 +319,8 @@ def render_weekly_bill(df_entries, df_contractors):
     # --- TAB 2: CONTRACTOR VIEW ---
     with tab_con:
         all_cons = sorted(df_week["contractor"].unique())
-        sel_con = st.selectbox("Select Contractor", all_cons, key="sb_con")
+        # Modern Pills for Contractor View (instead of Selectbox)
+        sel_con = st.pills("Select Contractor", all_cons, key="sb_con", default=all_cons[0] if all_cons else None)
         
         if sel_con:
             st.divider()
@@ -331,8 +333,7 @@ def render_weekly_bill(df_entries, df_contractors):
                 df_sub = df_view[df_view["site"] == site_name]
                 entry_map = {d.date(): r for d, r in zip(df_sub["date_dt"], df_sub.to_dict('records'))}
                 
-                # --- NEW STEP: Fetch Rates BEFORE the loop ---
-                # Note: We use 'sel_con' here because we are in the Contractor Tab
+                # --- FETCH RATES BEFORE LOOP ---
                 rates = df_contractors[df_contractors["name"] == sel_con].sort_values("effective_date", ascending=False)
                 rm, rh, rl = 0, 0, 0
                 if not rates.empty:
@@ -348,7 +349,7 @@ def render_weekly_bill(df_entries, df_contractors):
                         r = entry_map[day_date]
                         m, h, l = r["count_mason"], r["count_helper"], r["count_ladies"]
                         
-                        # --- FIX: Calculate Cost Dynamically ---
+                        # Calculate Cost Dynamically
                         current_daily_cost = (m * rm) + (h * rh) + (l * rl)
 
                         if m == 0 and h == 0 and l == 0:
@@ -363,14 +364,11 @@ def render_weekly_bill(df_entries, df_contractors):
                     tm += m
                     th += h
                     tl += l
-                    tamt += current_daily_cost # Add FRESH cost
+                    tamt += current_daily_cost
 
-                # (The old rate fetching code was here - we moved it to the top)
-                
                 pdf_data.append({"name": site_name, "rows": rows, "totals": {"m": tm, "h": th, "l": tl, "amt": tamt}, "rates": {"rm": rm, "rh": rh, "rl": rl}})
 
                 st.markdown(f"#### 📍 {site_name}")
-                # ... rest of the display code remains the same ...
                 if is_admin:
                     k1, k2, k3, k4 = st.columns(4)
                     k1.metric("💰 Payable", f"₹{tamt:,.0f}")
@@ -541,14 +539,19 @@ with st.sidebar:
         st.rerun()
 
 # --- 9. MAIN APP NAVIGATION ---
-tabs = ["📝 Daily Entry", "📊 Weekly Bill"]
+# "Materials" is accessible to everyone. The site filtering handles user permissions.
+tabs = ["📝 Daily Entry", "📊 Weekly Bill", "🧱 Materials"]
+
 if st.session_state["role"] == "admin": 
-    tabs += ["🔍 Site Logs", "📍 Sites", "👷 Contractors", "👥 Users", "📂 Archive & Recovery"]
+    tabs += ["📈 Dashboard", "🔍 Site Logs", "📍 Sites", "👷 Contractors", "👥 Users", "📂 Archive & Recovery"]
 
 current_tab = st.selectbox("Navigate", tabs, label_visibility="collapsed")
 st.divider()
 
+
+# ==============================================================================
 # TAB 1: DAILY ENTRY
+# ==============================================================================
 if current_tab == "📝 Daily Entry":
     df_sites = fetch_data("sites")
     df_con = fetch_data("contractors")
@@ -678,18 +681,173 @@ if current_tab == "📝 Daily Entry":
         except: 
             pass
 
-# TAB 3: BILLING (USERS ALLOWED)
+# ==============================================================================
+# TAB 2: WEEKLY BILL
+# ==============================================================================
 elif current_tab == "📊 Weekly Bill":
     st.subheader("📊 Weekly Bill")
     try:
-        # Changed: Fetch ALL data to fix "No Data" issue caused by strict year filtering
         df_entries = fetch_data("entries")
     except:
         df_entries = pd.DataFrame()
         
     render_weekly_bill(df_entries, fetch_data("contractors"))
 
-# TAB 2: SITE LOGS (ADMIN ONLY)
+# ==============================================================================
+# TAB 3: MATERIALS (ALL USERS)
+# ==============================================================================
+elif current_tab == "🧱 Materials":
+    st.subheader("🧱 Material Tracking")
+    
+    # 1. Fetch Sites & Apply User Filtering
+    df_sites = fetch_data("sites")
+    if df_sites.empty:
+        st.warning("Please add sites first.")
+    else:
+        av_sites = df_sites["name"].unique().tolist()
+        
+        # --- SITE FILTERING LOGIC ---
+        if st.session_state["role"] != "admin":
+            assigned_raw = st.session_state.get("assigned_site", "")
+            if "All" not in assigned_raw and "None/All" not in assigned_raw:
+                assigned_list = [s.strip() for s in assigned_raw.split(",")]
+                av_sites = [s for s in av_sites if s in assigned_list]
+            
+            if not av_sites:
+                st.error("⚠️ You are not assigned to any active sites.")
+                st.stop()
+        # ---------------------------------
+
+        sel_site = st.selectbox("📍 Select Site for Materials", av_sites)
+        st.divider()
+
+        if sel_site:
+            # 2. Create the Main Columns (Categories) as Tabs
+            categories = ["Civil Material", "Steel Material", "Soil Material", "RMC"]
+            mat_tabs = st.tabs(categories)
+            
+            # Fetch existing material data for this site
+            try:
+                raw_materials = supabase.table("materials").select("*").eq("site", sel_site).execute()
+                df_mat = pd.DataFrame(raw_materials.data) if raw_materials.data else pd.DataFrame()
+            except Exception as e:
+                df_mat = pd.DataFrame()
+                st.error("Error fetching materials data.")
+
+            # 3. Build UI for each Category
+            for i, cat in enumerate(categories):
+                with mat_tabs[i]:
+                    st.markdown(f"### ➕ Log New {cat}")
+                    
+                    # Entry Form
+                    with st.form(f"form_{cat}"):
+                        c1, c2, c3 = st.columns(3)
+                        m_date = c1.date_input("Date", date.today(), format="DD-MM-YYYY", key=f"d_{cat}")
+                        m_vendor = c2.text_input("Vendor Name", key=f"v_{cat}", placeholder="e.g., ABC Suppliers")
+                        m_material = c3.text_input("Material Description", key=f"m_{cat}", placeholder="e.g., Cement (50kg bags)")
+                        
+                        c4, c5 = st.columns(2)
+                        m_qty = c4.number_input("Quantity", min_value=0.0, step=1.0, key=f"q_{cat}")
+                        m_amt = c5.number_input("Total Amount (₹)", min_value=0.0, step=100.0, key=f"a_{cat}")
+                        
+                        if st.form_submit_button("Save Material Entry", type="primary", use_container_width=True):
+                            if not m_vendor or not m_material:
+                                st.error("Vendor and Material fields cannot be empty.")
+                            else:
+                                load = {
+                                    "date": str(m_date),
+                                    "site": sel_site,
+                                    "category": cat,
+                                    "vendor": m_vendor,
+                                    "material_name": m_material,
+                                    "quantity": m_qty,
+                                    "amount": m_amt
+                                }
+                                try:
+                                    supabase.table("materials").insert(load).execute()
+                                    st.success(f"✅ {cat} saved successfully!")
+                                    st.rerun()
+                                except Exception as e:
+                                    st.error("⚠️ Failed to save entry. Check database connection.")
+                    
+                    st.markdown("---")
+                    st.markdown(f"### 📋 Past Entries ({cat})")
+                    
+                    # Display the Sub-Columns (Table Data)
+                    if not df_mat.empty:
+                        # Filter dataframe for the current category
+                        df_cat = df_mat[df_mat["category"] == cat].copy()
+                        
+                        if not df_cat.empty:
+                            # Format date and sort
+                            df_cat["date_dt"] = pd.to_datetime(df_cat["date"])
+                            df_cat = df_cat.sort_values("date_dt", ascending=False)
+                            
+                            # Hide total costs from regular users (only Admin sees financials)
+                            if st.session_state["role"] == "admin":
+                                total_spent = df_cat["amount"].sum()
+                                st.metric(f"Total {cat} Cost", f"₹{total_spent:,.2f}")
+                            
+                            # Rename columns for clean display
+                            display_df = df_cat[["date", "vendor", "material_name", "quantity", "amount"]].rename(
+                                columns={
+                                    "date": "Date", 
+                                    "vendor": "Vendor", 
+                                    "material_name": "Material", 
+                                    "quantity": "Quantity", 
+                                    "amount": "Amount (₹)"
+                                }
+                            )
+                            st.dataframe(display_df, use_container_width=True, hide_index=True)
+                        else:
+                            st.info(f"No {cat} logged for {sel_site} yet.")
+                    else:
+                        st.info("No materials logged yet.")
+
+# ==============================================================================
+# ADMIN ONLY TABS BELOW
+# ==============================================================================
+
+# TAB: DASHBOARD (ADMIN ONLY)
+elif current_tab == "📈 Dashboard":
+    st.subheader("📈 Cost Analytics & Dashboard")
+    df_entries = fetch_data("entries")
+    
+    if not df_entries.empty:
+        df_entries["date_dt"] = pd.to_datetime(df_entries["date"])
+        
+        # Top Level Metrics
+        total_spent = df_entries["total_cost"].sum()
+        total_masons = df_entries["count_mason"].sum()
+        total_helpers = df_entries["count_helper"].sum()
+        
+        c1, c2, c3 = st.columns(3)
+        c1.metric("💰 Total Labor Spent (All Time)", f"₹{total_spent:,.0f}")
+        c2.metric("🧱 Total Masons Logged", f"{total_masons}")
+        c3.metric("🛠️ Total Helpers Logged", f"{total_helpers}")
+        
+        st.divider()
+        col_chart1, col_chart2 = st.columns(2)
+        
+        # Chart 1: Cost by Site
+        with col_chart1:
+            st.markdown("### 📍 Total Cost by Site")
+            site_cost = df_entries.groupby("site")["total_cost"].sum().reset_index()
+            st.bar_chart(site_cost.set_index("site"), color="#F39C12")
+            
+        # Chart 2: Cost over Time (Last 30 Days)
+        with col_chart2:
+            st.markdown("### 📅 Daily Cost (Last 30 Days)")
+            recent = df_entries[df_entries["date_dt"] >= (pd.Timestamp.now() - pd.Timedelta(days=30))]
+            if not recent.empty:
+                date_cost = recent.groupby(recent["date_dt"].dt.date)["total_cost"].sum().reset_index()
+                st.line_chart(date_cost.set_index("date_dt"))
+            else:
+                st.info("No entries in the last 30 days.")
+    else:
+        st.info("Not enough data to generate dashboard.")
+
+# TAB: SITE LOGS (ADMIN ONLY)
 elif current_tab == "🔍 Site Logs":
     st.subheader("🔍 Site Logs")
     response = supabase.table("entries").select("*").order("date", desc=True).limit(500).execute()
@@ -724,7 +882,7 @@ elif current_tab == "🔍 Site Logs":
     else: 
         st.info("No logs.")
 
-# TAB 4: SITE MANAGEMENT (ADMIN ONLY)
+# TAB: SITE MANAGEMENT (ADMIN ONLY)
 elif current_tab == "📍 Sites":
     st.subheader("📍 Sites")
     st.dataframe(fetch_data("sites"), hide_index=True, use_container_width=True)
@@ -748,7 +906,7 @@ elif current_tab == "📍 Sites":
              st.success("Deleted")
              st.rerun()
 
-# TAB 5: CONTRACTORS (ADMIN ONLY)
+# TAB: CONTRACTORS (ADMIN ONLY)
 elif current_tab == "👷 Contractors":
     st.subheader("Contractor Rates")
     df_c = fetch_data("contractors")
@@ -775,7 +933,7 @@ elif current_tab == "👷 Contractors":
             st.success("Saved")
             st.rerun()
 
-# TAB 6: USERS (ADMIN ONLY)
+# TAB: USERS (ADMIN ONLY)
 elif current_tab == "👥 Users":
     st.subheader("Users")
     st.dataframe(fetch_data("users"), use_container_width=True)
@@ -838,7 +996,7 @@ elif current_tab == "👥 Users":
                 else: 
                     st.error("⚠️ Wrong Security Code.")
 
-# TAB 7: ARCHIVE & RECOVERY (ADMIN ONLY)
+# TAB: ARCHIVE & RECOVERY (ADMIN ONLY)
 elif current_tab == "📂 Archive & Recovery":
     st.subheader("Recovery Zone")
     t1, t2, t3 = st.tabs(["Reset Data", "View Archives (Offline)", "Restore Data"])
