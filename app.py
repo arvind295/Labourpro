@@ -539,8 +539,7 @@ with st.sidebar:
         st.rerun()
 
 # --- 9. MAIN APP NAVIGATION ---
-# "Materials" is accessible to everyone. The site filtering handles user permissions.
-tabs = ["📝 Daily Entry", "📊 Weekly Bill", "🧱 Materials"]
+tabs = ["📝 Daily Entry", "📊 Weekly Bill", "🧱 Materials", "📓 My Diary"]
 
 if st.session_state["role"] == "admin": 
     tabs += ["📈 Dashboard", "🔍 Site Logs", "📍 Sites", "👷 Contractors", "👥 Users", "📂 Archive & Recovery"]
@@ -803,6 +802,70 @@ elif current_tab == "🧱 Materials":
                             st.info(f"No {cat} logged for {sel_site} yet.")
                     else:
                         st.info("No materials logged yet.")
+                        # ==============================================================================
+# TAB 4: MY DIARY (ALL USERS - PERSONAL)
+# ==============================================================================
+elif current_tab == "📓 My Diary":
+    st.subheader("📓 My Personal Diary")
+    st.write("Use this space to jot down private notes, reminders, or site observations.")
+
+    # Get the currently logged-in user's phone number
+    user_phone = st.session_state.get("phone")
+
+    if not user_phone:
+        st.error("Session error. Please log in again.")
+        st.stop()
+
+    # --- 1. WRITE NEW ENTRY ---
+    with st.form("diary_form"):
+        d_date = st.date_input("Date", date.today(), format="DD-MM-YYYY")
+        d_content = st.text_area("Write your note here...", height=150, placeholder="What happened today?")
+        
+        if st.form_submit_button("💾 Save Note", type="primary"):
+            if not d_content.strip():
+                st.error("Note cannot be empty.")
+            else:
+                load = {
+                    "date": str(d_date),
+                    "phone": user_phone,
+                    "content": d_content.strip()
+                }
+                try:
+                    supabase.table("diary_entries").insert(load).execute()
+                    st.success("✅ Note saved successfully!")
+                    time.sleep(1)
+                    st.rerun()
+                except Exception as e:
+                    st.error("⚠️ Failed to save note. Check database connection.")
+
+    st.divider()
+
+    # --- 2. VIEW PAST ENTRIES ---
+    st.markdown("### 📜 My Past Notes")
+    
+    try:
+        # Fetch ONLY the notes belonging to this specific user
+        res = supabase.table("diary_entries").select("*").eq("phone", user_phone).order("date", desc=True).execute()
+        df_diary = pd.DataFrame(res.data) if res.data else pd.DataFrame()
+        
+        if not df_diary.empty:
+            for _, row in df_diary.iterrows():
+                # Format the date nicely (e.g., 25 Jan 2026)
+                formatted_date = pd.to_datetime(row['date']).strftime('%d %b %Y')
+                
+                # Use an expander for neatness
+                with st.expander(f"📝 {formatted_date}"):
+                    st.write(row['content'])
+                    
+                    # Optional: Add a subtle delete button for their own notes
+                    if st.button("🗑️ Delete", key=f"del_diary_{row['id']}"):
+                        supabase.table("diary_entries").delete().eq("id", row['id']).execute()
+                        st.rerun()
+        else:
+            st.info("You haven't written any notes yet.")
+            
+    except Exception as e:
+        st.error("Error loading past entries.")
 
 # ==============================================================================
 # ADMIN ONLY TABS BELOW
