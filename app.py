@@ -721,17 +721,34 @@ elif current_tab == "🧱 Materials":
         st.divider()
 
         if sel_site:
-            # 2. Create the Main Columns (Categories) as Tabs
-            categories = ["Civil Material", "Steel Material", "Soil Material", "RMC"]
-            mat_tabs = st.tabs(categories)
-            
-            # Fetch existing material data for this site
+            # --- NEW: FETCH DATA AND CALCULATE BILLING WEEKS ---
             try:
                 raw_materials = supabase.table("materials").select("*").eq("site", sel_site).execute()
                 df_mat = pd.DataFrame(raw_materials.data) if raw_materials.data else pd.DataFrame()
             except Exception as e:
                 df_mat = pd.DataFrame()
                 st.error("Error fetching materials data.")
+
+            sel_week = "All Time"
+            if not df_mat.empty:
+                df_mat["date_dt"] = pd.to_datetime(df_mat["date"], errors='coerce')
+                df_mat = df_mat.dropna(subset=["date_dt"])
+                
+                if not df_mat.empty:
+                    # Apply standard Saturday-Friday billing logic
+                    df_mat["start_date"] = df_mat["date_dt"].dt.date.apply(get_billing_start_date)
+                    df_mat["end_date"] = df_mat["start_date"] + timedelta(days=6)
+                    df_mat["week_label"] = df_mat.apply(lambda x: f"{x['start_date'].strftime('%d-%m-%Y')} to {x['end_date'].strftime('%d-%m-%Y')}", axis=1)
+                    
+                    unique_weeks = df_mat[["start_date", "week_label"]].drop_duplicates().sort_values("start_date", ascending=False)
+                    weeks = unique_weeks["week_label"].tolist()
+                    
+                    sel_week = st.selectbox("📅 Filter Entries by Week", ["All Time"] + weeks)
+            st.divider()
+
+            # 2. Create the Main Columns (Categories) as Tabs
+            categories = ["Civil Material", "Steel Material", "Soil Material", "RMC"]
+            mat_tabs = st.tabs(categories)
 
             # 3. Build UI for each Category
             for i, cat in enumerate(categories):
@@ -777,15 +794,19 @@ elif current_tab == "🧱 Materials":
                         # Filter dataframe for the current category
                         df_cat = df_mat[df_mat["category"] == cat].copy()
                         
+                        # --- APPLY WEEKLY FILTER ---
+                        if sel_week != "All Time":
+                            df_cat = df_cat[df_cat["week_label"] == sel_week]
+                        
                         if not df_cat.empty:
                             # Format date and sort
-                            df_cat["date_dt"] = pd.to_datetime(df_cat["date"])
                             df_cat = df_cat.sort_values("date_dt", ascending=False)
                             
                             # Hide total costs from regular users (only Admin sees financials)
                             if st.session_state["role"] == "admin":
                                 total_spent = df_cat["amount"].sum()
-                                st.metric(f"Total {cat} Cost", f"₹{total_spent:,.2f}")
+                                week_display = f"({sel_week})" if sel_week != "All Time" else "(All Time)"
+                                st.metric(f"Total {cat} Cost {week_display}", f"₹{total_spent:,.2f}")
                             
                             # Rename columns for clean display
                             display_df = df_cat[["date", "vendor", "material_name", "quantity", "amount"]].rename(
@@ -799,7 +820,10 @@ elif current_tab == "🧱 Materials":
                             )
                             st.dataframe(display_df, use_container_width=True, hide_index=True)
                         else:
-                            st.info(f"No {cat} logged for {sel_site} yet.")
+                            if sel_week != "All Time":
+                                st.info(f"No {cat} logged for {sel_site} during the week of {sel_week}.")
+                            else:
+                                st.info(f"No {cat} logged for {sel_site} yet.")
                     else:
                         st.info("No materials logged yet.")
                         # ==============================================================================
