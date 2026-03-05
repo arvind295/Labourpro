@@ -2,14 +2,9 @@ name: Daily Database Backup
 
 on:
   schedule:
-    # -------------------------------------------------------
-    # CHANGED TIME: Runs at 02:30 AM UTC (IST 8:00 AM approx)
-    # This avoids the "Midnight Traffic Jam"
-    # -------------------------------------------------------
+    # Runs at 02:30 AM UTC (IST 8:00 AM approx)
     - cron: '30 2 * * *'
   
-  # This makes it run immediately when you save this file
-  # helping "register" the new timer instantly.
   push:
     branches:
       - main
@@ -38,3 +33,13 @@ jobs:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
         run: python backup_script.py
+
+      # --- NEW STEP ADDED HERE ---
+      - name: Upload Backup File to GitHub
+        uses: actions/upload-artifact@v4
+        with:
+          name: daily-backup-file
+          # Put the exact name of the file your python script creates below. 
+          # For example, if it makes 'backup.json', put 'backup.json'
+          # If it makes 'database_backup.csv', change it to that!
+          path: '*.json'
