@@ -34,8 +34,8 @@ jobs:
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
         run: python backup_script.py
 
-      - name: Upload Backup File to GitHub
-        uses: actions/upload-artifact@v4
-        with:
-          name: daily-backup-file
-          path: daily_backup.json
+      - name: Run Backup Script
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+        run: python backup_script.py
