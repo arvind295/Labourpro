@@ -77,7 +77,7 @@ def apply_custom_styling():
 
 apply_custom_styling()
 
-# --- 5. HELPER FUNCTIONS & PDF ENGINE ---
+# --- 5. HELPER FUNCTIONS & PDF ENGINES ---
 def fetch_data(table):
     all_data = []
     page_size = 1000
@@ -99,6 +99,7 @@ def get_billing_start_date(entry_date):
     days_since_saturday = (entry_date.weekday() + 2) % 7
     return entry_date - timedelta(days=days_since_saturday)
 
+# --- PDF ENGINE FOR LABOUR BILLS ---
 class PDFBill(FPDF):
     def header(self):
         self.set_font('Arial', 'B', 16)
@@ -144,6 +145,77 @@ def generate_pdf_bytes(header_name, week_label, billing_data):
         pdf.ln(15)
     return pdf.output(dest='S').encode('latin-1')
 
+# --- PDF ENGINE FOR MATERIALS ---
+class MaterialPDF(FPDF):
+    def header(self):
+        self.set_font('Arial', 'B', 16)
+        self.cell(0, 10, 'Material Log Report', 0, 1, 'C')
+        self.ln(5)
+    def footer(self):
+        self.set_y(-15)
+        self.set_font('Arial', 'I', 8)
+        self.cell(0, 10, f'Page {self.page_no()}', 0, 0, 'C')
+
+def generate_material_pdf_bytes(site_name, period_label, df_mat):
+    pdf = MaterialPDF()
+    pdf.add_page()
+    pdf.set_font("Arial", 'B', 12)
+    pdf.cell(0, 10, f"Site: {site_name}", 0, 1, 'L')
+    pdf.cell(0, 10, f"Period: {period_label}", 0, 1, 'L')
+    pdf.ln(5)
+
+    total_grand = 0
+    categories = ["Civil Material", "Steel Material", "Soil Material", "RMC"]
+
+    for cat in categories:
+        df_cat = df_mat[df_mat["category"] == cat]
+        if not df_cat.empty:
+            pdf.set_fill_color(220, 220, 220)
+            pdf.set_font("Arial", 'B', 12)
+            pdf.cell(0, 10, f"{cat}", 0, 1, 'L', fill=True)
+
+            # Table Header
+            pdf.set_font("Arial", 'B', 9)
+            pdf.cell(25, 8, "Date", 1)
+            pdf.cell(50, 8, "Vendor", 1)
+            pdf.cell(80, 8, "Material", 1)
+            pdf.cell(15, 8, "Qty", 1)
+            pdf.cell(20, 8, "Amount", 1)
+            pdf.ln()
+
+            # Table Rows
+            pdf.set_font("Arial", '', 9)
+            cat_total = 0
+            for _, row in df_cat.iterrows():
+                pdf.cell(25, 8, str(row.get('date', '')), 1)
+                
+                # Truncate strings to prevent PDF layout breaking
+                vendor = str(row.get('vendor', ''))[:22]
+                material = str(row.get('material_name', ''))[:40]
+                
+                pdf.cell(50, 8, vendor, 1)
+                pdf.cell(80, 8, material, 1)
+                pdf.cell(15, 8, str(row.get('quantity', '')), 1)
+                amt = float(row.get('amount', 0))
+                cat_total += amt
+                pdf.cell(20, 8, f"{amt:,.0f}", 1)
+                pdf.ln()
+
+            # Category Total
+            pdf.set_font("Arial", 'B', 9)
+            pdf.cell(170, 8, f"Total {cat}", 1, 0, 'R')
+            pdf.cell(20, 8, f"{cat_total:,.0f}", 1, 1, 'L')
+            pdf.ln(8)
+            total_grand += cat_total
+
+    # Grand Total
+    if total_grand > 0:
+        pdf.set_font("Arial", 'B', 14)
+        pdf.cell(0, 10, f"Grand Total: Rs. {total_grand:,.2f}", 0, 1, 'R')
+
+    return pdf.output(dest='S').encode('latin-1')
+
+# --- WEEKLY BILL RENDERER ---
 def render_weekly_bill(df_entries, df_contractors):
     if df_entries.empty: 
         st.info("No data available.")
@@ -624,6 +696,8 @@ elif current_tab == "🧱 Materials":
                 st.error("Error fetching materials data.")
 
             sel_week = "All Time"
+            weeks = []
+            
             if not df_mat.empty:
                 df_mat["date_dt"] = pd.to_datetime(df_mat["date"], errors='coerce')
                 df_mat = df_mat.dropna(subset=["date_dt"])
@@ -633,9 +707,36 @@ elif current_tab == "🧱 Materials":
                     df_mat["week_label"] = df_mat.apply(lambda x: f"{x['start_date'].strftime('%d-%m-%Y')} to {x['end_date'].strftime('%d-%m-%Y')}", axis=1)
                     unique_weeks = df_mat[["start_date", "week_label"]].drop_duplicates().sort_values("start_date", ascending=False)
                     weeks = unique_weeks["week_label"].tolist()
-                    sel_week = st.selectbox("📅 Filter Entries by Week", ["All Time"] + weeks)
+
+            # Week Filter Selection
+            st.markdown("### 📅 Filter & Download Report")
+            sel_week = st.selectbox("Select Time Period to View & Download", ["All Time"] + weeks)
+            
+            # Filter the dataframe based on the selection for displaying & PDF
+            if sel_week != "All Time" and not df_mat.empty:
+                df_mat_filtered = df_mat[df_mat["week_label"] == sel_week].copy()
+            else:
+                df_mat_filtered = df_mat.copy()
+
+            # PDF Download Button (Visible to everyone)
+            if not df_mat_filtered.empty:
+                try:
+                    pdf_bytes = generate_material_pdf_bytes(sel_site, sel_week, df_mat_filtered)
+                    st.download_button(
+                        label=f"⬇️ Download Material Report (PDF)", 
+                        data=pdf_bytes, 
+                        file_name=f"Materials_{sel_site}_{sel_week.replace(' ', '_')}.pdf", 
+                        mime="application/pdf",
+                        type="primary"
+                    )
+                except Exception as e:
+                    st.error(f"Error generating PDF: {e}")
+            else:
+                st.info("No records found to generate a report.")
+                
             st.divider()
 
+            # Tabs for Entry & Viewing
             categories = ["Civil Material", "Steel Material", "Soil Material", "RMC"]
             mat_tabs = st.tabs(categories)
 
@@ -668,28 +769,22 @@ elif current_tab == "🧱 Materials":
                                     st.error("⚠️ Failed to save entry. Check database connection.")
                     
                     st.markdown("---")
-                    st.markdown(f"### 📋 Past Entries ({cat})")
-                    if not df_mat.empty:
-                        df_cat = df_mat[df_mat["category"] == cat].copy()
-                        if sel_week != "All Time":
-                            df_cat = df_cat[df_cat["week_label"] == sel_week]
+                    st.markdown(f"### 📋 {cat} Entries ({sel_week})")
+                    if not df_mat_filtered.empty:
+                        df_cat = df_mat_filtered[df_mat_filtered["category"] == cat].copy()
                         
                         if not df_cat.empty:
                             df_cat = df_cat.sort_values("date_dt", ascending=False)
-                            if st.session_state["role"] == "admin":
-                                total_spent = df_cat["amount"].sum()
-                                week_display = f"({sel_week})" if sel_week != "All Time" else "(All Time)"
-                                st.metric(f"Total {cat} Cost {week_display}", f"₹{total_spent:,.2f}")
+                            # Show total cost for both Admin and User in this view for clarity
+                            total_spent = df_cat["amount"].sum()
+                            st.metric(f"Total Spent on {cat}", f"₹{total_spent:,.2f}")
                             
                             display_df = df_cat[["date", "vendor", "material_name", "quantity", "amount"]].rename(
                                 columns={"date": "Date", "vendor": "Vendor", "material_name": "Material", "quantity": "Quantity", "amount": "Amount (₹)"}
                             )
                             st.dataframe(display_df, use_container_width=True, hide_index=True)
                         else:
-                            if sel_week != "All Time":
-                                st.info(f"No {cat} logged for {sel_site} during the week of {sel_week}.")
-                            else:
-                                st.info(f"No {cat} logged for {sel_site} yet.")
+                            st.info(f"No {cat} logged for {sel_site} during {sel_week}.")
                     else:
                         st.info("No materials logged yet.")
 
