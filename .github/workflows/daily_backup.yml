@@ -34,12 +34,8 @@ jobs:
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
         run: python backup_script.py
 
-      # --- NEW STEP ADDED HERE ---
       - name: Upload Backup File to GitHub
         uses: actions/upload-artifact@v4
         with:
           name: daily-backup-file
-          # This tells GitHub to look for BOTH JSON and CSV files!
-          path: |
-            *.json
-            *.csv
+          path: daily_backup.json
