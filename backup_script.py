@@ -33,7 +33,8 @@ def fetch_data(table):
 
 # 2. FETCH DATA
 print("⏳ Fetching data...")
-tables = ["entries", "users", "sites", "contractors"]
+# ADDED 'materials' and 'diary_entries' to the list below!
+tables = ["entries", "users", "sites", "contractors", "materials", "diary_entries"]
 backup_data = {}
 
 for t in tables:
