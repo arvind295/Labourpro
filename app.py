@@ -318,7 +318,8 @@ def render_weekly_bill(df_entries, df_contractors):
                 with st.expander(f"📄 Details: {con_name}"):
                     st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
 
-            if pdf_data and is_admin:
+            # UPDATED: Changed from `if pdf_data and is_admin:` to `if pdf_data:` so all users can download
+            if pdf_data:
                 try:
                     pdf_bytes = generate_pdf_bytes(sel_site, sel_week, pdf_data)
                     st.download_button(f"⬇️ PDF ({sel_site})", pdf_bytes, f"Bill_{sel_site}.pdf", "application/pdf")
@@ -383,7 +384,8 @@ def render_weekly_bill(df_entries, df_contractors):
                 with st.expander(f"📄 Details: {site_name}"):
                     st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
 
-            if pdf_data and is_admin:
+            # UPDATED: Changed from `if pdf_data and is_admin:` to `if pdf_data:` so all users can download
+            if pdf_data:
                 try:
                     pdf_bytes = generate_pdf_bytes(sel_con, sel_week, pdf_data)
                     st.download_button(f"⬇️ PDF ({sel_con})", pdf_bytes, f"Bill_{sel_con}.pdf", "application/pdf")
