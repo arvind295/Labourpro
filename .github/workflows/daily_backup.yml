@@ -39,7 +39,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: daily-backup-file
-          # Put the exact name of the file your python script creates below. 
-          # For example, if it makes 'backup.json', put 'backup.json'
-          # If it makes 'database_backup.csv', change it to that!
-          path: '*.json'
+          # This tells GitHub to look for BOTH JSON and CSV files!
+          path: |
+            *.json
+            *.csv
