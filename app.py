@@ -99,6 +99,22 @@ def get_billing_start_date(entry_date):
     days_since_saturday = (entry_date.weekday() + 2) % 7
     return entry_date - timedelta(days=days_since_saturday)
 
+def upload_evidence(file_obj):
+    """Uploads photos/receipts to Supabase storage and returns the URL."""
+    try:
+        ext = file_obj.name.split('.')[-1]
+        unique_name = f"{uuid.uuid4()}.{ext}"
+        file_bytes = file_obj.getvalue()
+        supabase.storage.from_("evidence").upload(
+            file=file_bytes, 
+            path=unique_name, 
+            file_options={"content-type": f"image/{ext}"}
+        )
+        return supabase.storage.from_("evidence").get_public_url(unique_name)
+    except Exception as e:
+        st.error(f"Image upload failed: {e}")
+        return ""
+
 # --- PDF ENGINE FOR LABOUR BILLS ---
 class PDFBill(FPDF):
     def header(self):
@@ -318,7 +334,6 @@ def render_weekly_bill(df_entries, df_contractors):
                 with st.expander(f"📄 Details: {con_name}"):
                     st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
 
-            # UPDATED: Changed from `if pdf_data and is_admin:` to `if pdf_data:` so all users can download
             if pdf_data:
                 try:
                     pdf_bytes = generate_pdf_bytes(sel_site, sel_week, pdf_data)
@@ -384,7 +399,6 @@ def render_weekly_bill(df_entries, df_contractors):
                 with st.expander(f"📄 Details: {site_name}"):
                     st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
 
-            # UPDATED: Changed from `if pdf_data and is_admin:` to `if pdf_data:` so all users can download
             if pdf_data:
                 try:
                     pdf_bytes = generate_pdf_bytes(sel_con, sel_week, pdf_data)
@@ -599,6 +613,7 @@ if current_tab == "📝 Daily Entry":
                     default_desc = exist.get("work_description", "No Work / Holiday")
                 wdesc = st.text_input("Reason (Optional)", value=default_desc)
                 st.info("⚠️ This will be saved as a 'Nil' entry.")
+                uploaded_photo = None # No photo needed for a nil entry
             else:
                 vm, vh, vl, vd = 0.0, 0.0, 0.0, ""
                 if exist: 
@@ -612,6 +627,9 @@ if current_tab == "📝 Daily Entry":
                 nh = c5.number_input("Helper", value=vh, step=0.5)
                 nl = c6.number_input("Ladies", value=vl, step=0.5)
                 wdesc = st.text_area("Description", value=vd)
+                
+                # --- NEW PHOTO UPLOAD FEATURE ---
+                uploaded_photo = st.file_uploader("📸 Upload Site Photo (Optional)", type=["jpg", "jpeg", "png", "webp"])
 
                 rate_row = None
                 try:
@@ -630,10 +648,19 @@ if current_tab == "📝 Daily Entry":
                     cost = 0
 
             if st.button("Save Entry", type="primary", use_container_width=True): 
+                # Upload Photo if exists
+                photo_link = ""
+                if uploaded_photo:
+                    with st.spinner("Uploading photo..."):
+                        photo_link = upload_evidence(uploaded_photo)
+                elif exist and exist.get("photo_url"):
+                    photo_link = exist.get("photo_url") # Keep existing photo if editing and not replacing
+
                 load = {
                     "date": str(dt), "site": st_sel, "contractor": con_sel, 
                     "count_mason": nm, "count_helper": nh, "count_ladies": nl, 
-                    "total_cost": cost, "work_description": wdesc
+                    "total_cost": cost, "work_description": wdesc,
+                    "photo_url": photo_link
                 }
                 try:
                     if mode == "new": 
@@ -641,6 +668,7 @@ if current_tab == "📝 Daily Entry":
                     else: 
                         supabase.table("entries").update(load).eq("id", exist["id"]).execute()
                     st.success("✅ Saved Successfully!")
+                    time.sleep(1)
                     st.rerun()
                 except Exception as e:
                     st.warning("⚠️ Network timeout. Please click 'Save' again.")
@@ -652,7 +680,13 @@ if current_tab == "📝 Daily Entry":
             response = supabase.table("entries").select("*").order("date", desc=True).limit(50).execute()
             if response.data: 
                 df_recent = pd.DataFrame(response.data)
-                st.dataframe(df_recent[["date", "site", "contractor", "total_cost", "work_description"]], use_container_width=True)
+                # Including photo status in the recent view if available
+                if "photo_url" in df_recent.columns:
+                    df_recent["has_photo"] = df_recent["photo_url"].apply(lambda x: "📸 Yes" if x else "No")
+                    cols_to_show = ["date", "site", "contractor", "total_cost", "work_description", "has_photo"]
+                else:
+                    cols_to_show = ["date", "site", "contractor", "total_cost", "work_description"]
+                st.dataframe(df_recent[cols_to_show], use_container_width=True)
         except: 
             pass
 
@@ -750,22 +784,33 @@ elif current_tab == "🧱 Materials":
                         m_date = c1.date_input("Date", date.today(), format="DD-MM-YYYY", key=f"d_{cat}")
                         m_vendor = c2.text_input("Vendor Name", key=f"v_{cat}", placeholder="e.g., ABC Suppliers")
                         m_material = c3.text_input("Material Description", key=f"m_{cat}", placeholder="e.g., Cement (50kg bags)")
+                        
                         c4, c5 = st.columns(2)
                         m_qty = c4.number_input("Quantity", min_value=0.0, step=1.0, key=f"q_{cat}")
                         m_amt = c5.number_input("Total Amount (₹)", min_value=0.0, step=100.0, key=f"a_{cat}")
                         
+                        # --- NEW RECEIPT UPLOAD FEATURE ---
+                        m_receipt = st.file_uploader("🧾 Upload Bill/Receipt Image (Optional)", type=["jpg", "jpeg", "png"], key=f"rec_{cat}")
+
                         if st.form_submit_button("Save Material Entry", type="primary", use_container_width=True):
                             if not m_vendor or not m_material:
                                 st.error("Vendor and Material fields cannot be empty.")
                             else:
+                                receipt_link = ""
+                                if m_receipt:
+                                    with st.spinner("Uploading receipt..."):
+                                        receipt_link = upload_evidence(m_receipt)
+
                                 load = {
                                     "date": str(m_date), "site": sel_site, "category": cat,
                                     "vendor": m_vendor, "material_name": m_material,
-                                    "quantity": m_qty, "amount": m_amt
+                                    "quantity": m_qty, "amount": m_amt,
+                                    "receipt_url": receipt_link
                                 }
                                 try:
                                     supabase.table("materials").insert(load).execute()
                                     st.success(f"✅ {cat} saved successfully!")
+                                    time.sleep(1)
                                     st.rerun()
                                 except Exception as e:
                                     st.error("⚠️ Failed to save entry. Check database connection.")
@@ -846,34 +891,75 @@ elif current_tab == "📓 My Diary":
 
 elif current_tab == "📈 Dashboard":
     st.subheader("📈 Cost Analytics & Dashboard")
+    
+    # Custom Date Range Picker
+    st.markdown("### 📅 Select Date Range")
+    date_col1, date_col2 = st.columns(2)
+    with date_col1:
+        start_date = st.date_input("Start Date", date.today() - timedelta(days=30))
+    with date_col2:
+        end_date = st.date_input("End Date", date.today())
+        
+    st.divider()
+
     df_entries = fetch_data("entries")
+    df_materials = fetch_data("materials")
+    
+    # Filter Labor Data
     if not df_entries.empty:
-        df_entries["date_dt"] = pd.to_datetime(df_entries["date"])
-        total_spent = df_entries["total_cost"].sum()
-        total_masons = df_entries["count_mason"].sum()
-        total_helpers = df_entries["count_helper"].sum()
-        
-        c1, c2, c3 = st.columns(3)
-        c1.metric("💰 Total Labor Spent (All Time)", f"₹{total_spent:,.0f}")
-        c2.metric("🧱 Total Masons Logged", f"{total_masons}")
-        c3.metric("🛠️ Total Helpers Logged", f"{total_helpers}")
-        
-        st.divider()
-        col_chart1, col_chart2 = st.columns(2)
-        with col_chart1:
-            st.markdown("### 📍 Total Cost by Site")
-            site_cost = df_entries.groupby("site")["total_cost"].sum().reset_index()
-            st.bar_chart(site_cost.set_index("site"), color="#F39C12")
-        with col_chart2:
-            st.markdown("### 📅 Daily Cost (Last 30 Days)")
-            recent = df_entries[df_entries["date_dt"] >= (pd.Timestamp.now() - pd.Timedelta(days=30))]
-            if not recent.empty:
-                date_cost = recent.groupby(recent["date_dt"].dt.date)["total_cost"].sum().reset_index()
-                st.line_chart(date_cost.set_index("date_dt"))
-            else:
-                st.info("No entries in the last 30 days.")
+        df_entries["date_dt"] = pd.to_datetime(df_entries["date"]).dt.date
+        mask_entries = (df_entries["date_dt"] >= start_date) & (df_entries["date_dt"] <= end_date)
+        df_e_filtered = df_entries.loc[mask_entries]
+        total_labor_spent = df_e_filtered["total_cost"].sum() if not df_e_filtered.empty else 0
+        total_masons = df_e_filtered["count_mason"].sum() if not df_e_filtered.empty else 0
+        total_helpers = df_e_filtered["count_helper"].sum() if not df_e_filtered.empty else 0
     else:
-        st.info("Not enough data to generate dashboard.")
+        df_e_filtered, total_labor_spent, total_masons, total_helpers = pd.DataFrame(), 0, 0, 0
+
+    # Filter Material Data
+    if not df_materials.empty:
+        df_materials["date_dt"] = pd.to_datetime(df_materials["date"]).dt.date
+        mask_mat = (df_materials["date_dt"] >= start_date) & (df_materials["date_dt"] <= end_date)
+        df_m_filtered = df_materials.loc[mask_mat]
+        total_mat_spent = df_m_filtered["amount"].sum() if not df_m_filtered.empty else 0
+    else:
+        df_m_filtered, total_mat_spent = pd.DataFrame(), 0
+
+    grand_total = total_labor_spent + total_mat_spent
+
+    k1, k2, k3, k4 = st.columns(4)
+    k1.metric("🔥 Total Expenses", f"₹{grand_total:,.0f}")
+    k2.metric("👷 Labor Cost", f"₹{total_labor_spent:,.0f}")
+    k3.metric("🧱 Material Cost", f"₹{total_mat_spent:,.0f}")
+    k4.metric("👨‍🔧 Work Force Logs", f"{total_masons + total_helpers} Shifts")
+
+    st.divider()
+
+    chart_col1, chart_col2 = st.columns(2)
+    
+    with chart_col1:
+        st.markdown("### 📍 Total Cost by Site")
+        site_totals = {}
+        if not df_e_filtered.empty:
+            for _, r in df_e_filtered.iterrows():
+                site_totals[r["site"]] = site_totals.get(r["site"], 0) + r["total_cost"]
+        if not df_m_filtered.empty:
+            for _, r in df_m_filtered.iterrows():
+                site_totals[r["site"]] = site_totals.get(r["site"], 0) + r["amount"]
+                
+        if site_totals:
+            df_site_cost = pd.DataFrame(list(site_totals.items()), columns=["Site", "Total Cost"])
+            st.bar_chart(df_site_cost.set_index("Site"), color="#F39C12")
+        else:
+            st.info("No data for this date range.")
+
+    with chart_col2:
+        st.markdown("### 🧱 Material Breakdown")
+        if not df_m_filtered.empty:
+            cat_cost = df_m_filtered.groupby("category")["amount"].sum().reset_index()
+            st.bar_chart(cat_cost.set_index("category"), color="#2E86C1")
+        else:
+            st.info("No materials logged in this date range.")
 
 elif current_tab == "🔍 Site Logs":
     st.subheader("🔍 Site Logs")
@@ -887,7 +973,15 @@ elif current_tab == "🔍 Site Logs":
         fil_site = st.selectbox("Filter Site", ["All"] + sorted(df_e["site"].unique().tolist()))
         if fil_site != "All": 
             df_e = df_e[df_e["site"] == fil_site]
-        st.dataframe(df_e[["id", "Date", "site", "contractor", "count_mason", "count_helper", "count_ladies", "total_cost", "work_description"]], use_container_width=True, hide_index=True)
+            
+        # Optional: Show if a photo is attached
+        if "photo_url" in df_e.columns:
+            df_e["Photo"] = df_e["photo_url"].apply(lambda x: "📸 Yes" if x else "No")
+            cols = ["id", "Date", "site", "contractor", "count_mason", "count_helper", "count_ladies", "total_cost", "work_description", "Photo"]
+        else:
+            cols = ["id", "Date", "site", "contractor", "count_mason", "count_helper", "count_ladies", "total_cost", "work_description"]
+            
+        st.dataframe(df_e[cols], use_container_width=True, hide_index=True)
         st.divider()
         with st.expander("🗑️ Delete Entry"):
             col_d1, col_d2 = st.columns([1, 2])
