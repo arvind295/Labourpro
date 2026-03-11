@@ -965,12 +965,22 @@ elif current_tab == "🧾 Client Invoice":
             st.markdown("### Step 3: Add Materials")
             st.caption("Type the date, material descriptions, and costs directly into the grid below. It acts just like Excel! Add new rows at the bottom.")
             
-            # ---> Added Date Column Here <---
-            init_df = pd.DataFrame([{"Date": "", "Description": "", "Amount (Rs)": 0.0} for _ in range(5)])
-            edited_df = st.data_editor(init_df, num_rows="dynamic", use_container_width=True)
+            # ---> NEW: MEMORY SAVE FEATURE <---
+            if "invoice_mats" not in st.session_state:
+                st.session_state.invoice_mats = pd.DataFrame([{"Date": "", "Description": "", "Amount (Rs)": 0.0} for _ in range(5)])
+            
+            # The grid now saves to memory as you type
+            edited_df = st.data_editor(st.session_state.invoice_mats, num_rows="dynamic", use_container_width=True, key="inv_mat_grid")
+            st.session_state.invoice_mats = edited_df
             
             total_mat = pd.to_numeric(edited_df["Amount (Rs)"], errors='coerce').fillna(0).sum()
             st.metric("Total Material Cost", f"₹{total_mat:,.2f}")
+            
+            # New button to clear the memory when you are done
+            if st.button("🧹 Clear Table for Next Invoice"):
+                st.session_state.invoice_mats = pd.DataFrame([{"Date": "", "Description": "", "Amount (Rs)": 0.0} for _ in range(5)])
+                st.rerun()
+
             st.divider()
             
             grand_total = total_labor + total_mat
