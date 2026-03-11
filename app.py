@@ -244,7 +244,7 @@ class ClientInvoicePDF(FPDF):
         self.set_text_color(150, 150, 150)
         self.cell(0, 10, f'Page {self.page_no()}', 0, 0, 'C')
 
-def generate_client_invoice_bytes(site_name, date_range_label, labor_cost, df_mats, grand_total):
+def generate_client_invoice_bytes(site_name, date_range_label, labor_details, df_mats, grand_total):
     pdf = ClientInvoicePDF()
     pdf.add_page()
     
@@ -261,11 +261,41 @@ def generate_client_invoice_bytes(site_name, date_range_label, labor_cost, df_ma
     pdf.set_fill_color(52, 73, 94)
     pdf.set_text_color(255, 255, 255)
     pdf.cell(0, 10, " 1. LABOR EXPENSES", 0, 1, 'L', fill=True)
+    
     pdf.set_text_color(0, 0, 0)
-    pdf.set_font("Arial", '', 12)
-    pdf.cell(140, 10, "Total Labor Cost for the Period (Auto-Calculated):", 1, 0, 'L')
-    pdf.set_font("Arial", 'B', 12)
-    pdf.cell(50, 10, f"Rs. {labor_cost:,.2f}", 1, 1, 'R')
+    pdf.set_font("Arial", 'B', 11)
+    pdf.set_fill_color(236, 240, 241)
+    pdf.cell(50, 10, "Labor Type", 1, 0, 'C', fill=True)
+    pdf.cell(45, 10, "Total Shifts", 1, 0, 'C', fill=True)
+    pdf.cell(45, 10, "Rate (Rs)", 1, 0, 'C', fill=True)
+    pdf.cell(50, 10, "Amount (Rs)", 1, 1, 'C', fill=True)
+    
+    pdf.set_font("Arial", '', 11)
+    
+    if labor_details['m_count'] > 0:
+        pdf.cell(50, 10, " Masons", 1, 0, 'L')
+        pdf.cell(45, 10, f"{labor_details['m_count']}", 1, 0, 'C')
+        pdf.cell(45, 10, f"{labor_details['m_rate']:,.2f}", 1, 0, 'C')
+        pdf.cell(50, 10, f"{(labor_details['m_count'] * labor_details['m_rate']):,.2f}", 1, 1, 'R')
+        
+    if labor_details['h_count'] > 0:
+        pdf.cell(50, 10, " Helpers", 1, 0, 'L')
+        pdf.cell(45, 10, f"{labor_details['h_count']}", 1, 0, 'C')
+        pdf.cell(45, 10, f"{labor_details['h_rate']:,.2f}", 1, 0, 'C')
+        pdf.cell(50, 10, f"{(labor_details['h_count'] * labor_details['h_rate']):,.2f}", 1, 1, 'R')
+        
+    if labor_details['l_count'] > 0:
+        pdf.cell(50, 10, " Ladies", 1, 0, 'L')
+        pdf.cell(45, 10, f"{labor_details['l_count']}", 1, 0, 'C')
+        pdf.cell(45, 10, f"{labor_details['l_rate']:,.2f}", 1, 0, 'C')
+        pdf.cell(50, 10, f"{(labor_details['l_count'] * labor_details['l_rate']):,.2f}", 1, 1, 'R')
+
+    if labor_details['m_count'] == 0 and labor_details['h_count'] == 0 and labor_details['l_count'] == 0:
+        pdf.cell(190, 10, "No labor entered for this period.", 1, 1, 'C')
+        
+    pdf.set_font("Arial", 'B', 11)
+    pdf.cell(140, 10, "Total Labor Cost:", 1, 0, 'R', fill=True)
+    pdf.cell(50, 10, f"Rs. {labor_details['total']:,.2f}", 1, 1, 'R', fill=True)
     pdf.ln(10)
     
     # --- Section 2: Materials ---
@@ -968,35 +998,62 @@ elif current_tab == "📓 My Diary":
 # ==============================================================================
 
 elif current_tab == "📈 Dashboard":
-    st.subheader("📈 Cost Analytics & Dashboard")
+    st.subheader("📈 Financial Analytics Dashboard")
+    st.markdown("### 📅 Select Date Range")
+    date_col1, date_col2 = st.columns(2)
+    with date_col1: start_date = st.date_input("Start Date", date.today() - timedelta(days=30), format="DD-MM-YYYY")
+    with date_col2: end_date = st.date_input("End Date", date.today(), format="DD-MM-YYYY")
+        
+    st.divider()
+
     df_entries = fetch_data("entries")
+    df_materials = fetch_data("materials")
+    
     if not df_entries.empty:
-        df_entries["date_dt"] = pd.to_datetime(df_entries["date"])
-        total_spent = df_entries["total_cost"].sum()
-        total_masons = df_entries["count_mason"].sum()
-        total_helpers = df_entries["count_helper"].sum()
-        
-        c1, c2, c3 = st.columns(3)
-        c1.metric("💰 Total Labor Spent (All Time)", f"₹{total_spent:,.0f}")
-        c2.metric("🧱 Total Masons Logged", f"{total_masons}")
-        c3.metric("🛠️ Total Helpers Logged", f"{total_helpers}")
-        
-        st.divider()
-        col_chart1, col_chart2 = st.columns(2)
-        with col_chart1:
-            st.markdown("### 📍 Total Cost by Site")
-            site_cost = df_entries.groupby("site")["total_cost"].sum().reset_index()
-            st.bar_chart(site_cost.set_index("site"), color="#F39C12")
-        with col_chart2:
-            st.markdown("### 📅 Daily Cost (Last 30 Days)")
-            recent = df_entries[df_entries["date_dt"] >= (pd.Timestamp.now() - pd.Timedelta(days=30))]
-            if not recent.empty:
-                date_cost = recent.groupby(recent["date_dt"].dt.date)["total_cost"].sum().reset_index()
-                st.line_chart(date_cost.set_index("date_dt"))
-            else:
-                st.info("No entries in the last 30 days.")
-    else:
-        st.info("Not enough data to generate dashboard.")
+        df_entries["date_dt"] = pd.to_datetime(df_entries["date"]).dt.date
+        mask_entries = (df_entries["date_dt"] >= start_date) & (df_entries["date_dt"] <= end_date)
+        df_e_filtered = df_entries.loc[mask_entries]
+        total_labor_spent = df_e_filtered["total_cost"].sum() if not df_e_filtered.empty else 0
+        total_masons = df_e_filtered["count_mason"].sum() if not df_e_filtered.empty else 0
+        total_helpers = df_e_filtered["count_helper"].sum() if not df_e_filtered.empty else 0
+    else: df_e_filtered, total_labor_spent, total_masons, total_helpers = pd.DataFrame(), 0, 0, 0
+
+    if not df_materials.empty:
+        df_materials["date_dt"] = pd.to_datetime(df_materials["date"]).dt.date
+        mask_mat = (df_materials["date_dt"] >= start_date) & (df_materials["date_dt"] <= end_date)
+        df_m_filtered = df_materials.loc[mask_mat]
+        total_mat_spent = df_m_filtered["amount"].sum() if not df_m_filtered.empty else 0
+    else: df_m_filtered, total_mat_spent = pd.DataFrame(), 0
+
+    grand_total = total_labor_spent + total_mat_spent
+
+    k1, k2, k3, k4 = st.columns(4)
+    k1.metric("🔥 Total Expenses", f"₹{grand_total:,.0f}")
+    k2.metric("👷 Labor Cost", f"₹{total_labor_spent:,.0f}")
+    k3.metric("🧱 Material Cost", f"₹{total_mat_spent:,.0f}")
+    k4.metric("👨‍🔧 Work Force Logs", f"{total_masons + total_helpers} Shifts")
+
+    st.divider()
+    chart_col1, chart_col2 = st.columns(2)
+    with chart_col1:
+        st.markdown("### 📍 Total Cost by Site")
+        site_totals = {}
+        if not df_e_filtered.empty:
+            for _, r in df_e_filtered.iterrows(): site_totals[r["site"]] = site_totals.get(r["site"], 0) + r["total_cost"]
+        if not df_m_filtered.empty:
+            for _, r in df_m_filtered.iterrows(): site_totals[r["site"]] = site_totals.get(r["site"], 0) + r["amount"]
+                
+        if site_totals:
+            df_site_cost = pd.DataFrame(list(site_totals.items()), columns=["Site", "Total Cost"])
+            st.bar_chart(df_site_cost.set_index("Site"), color="#F39C12")
+        else: st.info("No data for this date range.")
+
+    with chart_col2:
+        st.markdown("### 🧱 Material Breakdown")
+        if not df_m_filtered.empty:
+            cat_cost = df_m_filtered.groupby("category")["amount"].sum().reset_index()
+            st.bar_chart(cat_cost.set_index("category"), color="#2E86C1")
+        else: st.info("No materials logged in this date range.")
 
 elif current_tab == "🧾 Client Invoice":
     st.subheader("🧾 Client Invoice Generator")
@@ -1018,17 +1075,46 @@ elif current_tab == "🧾 Client Invoice":
             
             st.divider()
             
-            # --- AUTO FETCH LABOR ---
-            st.markdown("### Step 2: Auto-Calculated Labor")
+            # --- AUTO FETCH LABOR & CLIENT MARGIN ---
+            st.markdown("### Step 2: Labor Billing (Apply Client Margin)")
             df_entries = fetch_data("entries")
+            tot_mason, tot_helper, tot_ladies = 0, 0, 0
+            internal_total_labor = 0
+            
             if not df_entries.empty:
                 df_entries["date_dt"] = pd.to_datetime(df_entries["date"]).dt.date
                 mask = (df_entries["site"] == inv_site) & (df_entries["date_dt"] >= inv_start) & (df_entries["date_dt"] <= inv_end)
                 df_e_filtered = df_entries[mask]
-                total_labor = df_e_filtered["total_cost"].sum() if not df_e_filtered.empty else 0
-            else: total_labor = 0
+                
+                if not df_e_filtered.empty:
+                    tot_mason = df_e_filtered["count_mason"].sum()
+                    tot_helper = df_e_filtered["count_helper"].sum()
+                    tot_ladies = df_e_filtered["count_ladies"].sum()
+                    internal_total_labor = df_e_filtered["total_cost"].sum()
+                    
+            st.info(f"💡 **Internal Cost:** Your actual labor payout for this period was approx **₹{internal_total_labor:,.0f}**. Enter your client billing rates below to apply your margin.")
             
-            st.metric(f"Total Labor Cost for {inv_site}", f"₹{total_labor:,.2f}")
+            c_l1, c_l2, c_l3 = st.columns(3)
+            client_rate_mason = c_l1.number_input(f"Client Rate: Mason ({tot_mason} shifts)", value=0.0, step=50.0)
+            client_rate_helper = c_l2.number_input(f"Client Rate: Helper ({tot_helper} shifts)", value=0.0, step=50.0)
+            client_rate_ladies = c_l3.number_input(f"Client Rate: Ladies ({tot_ladies} shifts)", value=0.0, step=50.0)
+            
+            total_labor = (tot_mason * client_rate_mason) + (tot_helper * client_rate_helper) + (tot_ladies * client_rate_ladies)
+            margin = total_labor - internal_total_labor
+            
+            st.metric(
+                f"Total Billed Labor for {inv_site}", 
+                f"₹{total_labor:,.2f}", 
+                delta=f"₹{margin:,.0f} Margin" if total_labor > 0 else None
+            )
+            
+            labor_details = {
+                'm_count': tot_mason, 'm_rate': client_rate_mason,
+                'h_count': tot_helper, 'h_rate': client_rate_helper,
+                'l_count': tot_ladies, 'l_rate': client_rate_ladies,
+                'total': total_labor
+            }
+            
             st.divider()
             
             # --- AUTO FETCH MATERIALS ---
@@ -1064,7 +1150,7 @@ elif current_tab == "🧾 Client Invoice":
             
             # 1. ADD TAB
             with tab_add:
-                with st.form("quick_add_mat"):
+                with st.form("quick_add_mat_v2"):
                     c_qm1, c_qm2 = st.columns([1, 2])
                     qm_date = c_qm1.date_input("Date of Purchase", inv_end, format="DD-MM-YYYY")
                     qm_desc = c_qm2.text_input("Material Description", placeholder="e.g., Cement (50 Bags)")
@@ -1135,7 +1221,7 @@ elif current_tab == "🧾 Client Invoice":
             if st.button("📄 Generate Professional Invoice", type="primary", use_container_width=True):
                 date_label = f"{inv_start.strftime('%d-%m-%Y')} to {inv_end.strftime('%d-%m-%Y')}"
                 with st.spinner("Generating beautiful PDF..."):
-                    pdf_bytes = generate_client_invoice_bytes(inv_site, date_label, total_labor, pdf_mats, grand_total)
+                    pdf_bytes = generate_client_invoice_bytes(inv_site, date_label, labor_details, pdf_mats, grand_total)
                 st.success("✅ Invoice Generated!")
                 st.download_button(
                     label="⬇️ Download Client Invoice (PDF)", data=pdf_bytes, 
@@ -1209,7 +1295,7 @@ elif current_tab == "👷 Contractors":
         rm = c1.number_input("Mason Rate", value=0)
         rh = c2.number_input("Helper Rate", value=0)
         rl = c3.number_input("Ladies Rate", value=0)
-        ed = st.date_input("Effective Date", date.today())
+        ed = st.date_input("Effective Date", date.today(), format="DD-MM-YYYY")
         if st.form_submit_button("Save"):
             supabase.table("contractors").insert({
                 "name": cn, "rate_mason": rm, "rate_helper": rh, "rate_ladies": rl, "effective_date": str(ed)
