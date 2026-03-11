@@ -945,8 +945,8 @@ elif current_tab == "🧾 Client Invoice":
             st.markdown("### Step 1: Select Site & Date Range")
             c1, c2, c3 = st.columns(3)
             inv_site = c1.selectbox("Select Project Site", client_sites)
-            inv_start = c2.date_input("Start Date", date.today() - timedelta(days=6))
-            inv_end = c3.date_input("End Date", date.today())
+            inv_start = c2.date_input("Start Date", date.today() - timedelta(days=6), format="DD-MM-YYYY")
+            inv_end = c3.date_input("End Date", date.today(), format="DD-MM-YYYY")
             
             st.divider()
             
@@ -998,7 +998,7 @@ elif current_tab == "🧾 Client Invoice":
             with st.expander("➕ Missing a material? Quick-Save one here!"):
                 with st.form("quick_add_mat"):
                     c_qm1, c_qm2 = st.columns([1, 2])
-                    qm_date = c_qm1.date_input("Date of Purchase", inv_end)
+                    qm_date = c_qm1.date_input("Date of Purchase", inv_end, format="DD-MM-YYYY")
                     qm_desc = c_qm2.text_input("Material Description", placeholder="e.g., Cement (50 Bags)")
                     qm_amt = st.number_input("Amount (₹)", min_value=0.0, step=100.0)
                     
