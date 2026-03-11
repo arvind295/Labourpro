@@ -965,12 +965,12 @@ elif current_tab == "🧾 Client Invoice":
             
             # --- AUTO FETCH MATERIALS ---
             st.markdown("### Step 3: Auto-Fetched Materials")
-            # Updated caption to also show dd-mm-yyyy
             st.caption(f"Showing materials saved to the database for **{inv_site}** between **{inv_start.strftime('%d-%m-%Y')}** and **{inv_end.strftime('%d-%m-%Y')}**.")
             
             df_materials = fetch_data("materials")
             pdf_mats = pd.DataFrame(columns=["Date", "Description", "Amount (Rs)"])
             total_mat = 0
+            df_m_filtered = pd.DataFrame() # Initialize empty for safety
             
             if not df_materials.empty:
                 df_materials["date_dt"] = pd.to_datetime(df_materials["date"]).dt.date
@@ -978,12 +978,10 @@ elif current_tab == "🧾 Client Invoice":
                 df_m_filtered = df_materials[mask_m].copy()
                 
                 if not df_m_filtered.empty:
-                    # ---> FORMATTING THE DATE HERE <---
-                    df_m_filtered["formatted_date"] = pd.to_datetime(df_m_filtered["date"]).dt.strftime('%d-%m-%Y')
-                    
                     # Format exactly how the PDF expects it
-                    df_m_filtered["Description"] = df_m_filtered["material_name"] + " (" + df_m_filtered["category"] + ")"
-                    pdf_mats = df_m_filtered[["formatted_date", "Description", "amount"]].rename(columns={"formatted_date": "Date", "amount": "Amount (Rs)"})
+                    df_m_filtered["formatted_date"] = pd.to_datetime(df_m_filtered["date"]).dt.strftime('%d-%m-%Y')
+                    df_m_filtered["Description_PDF"] = df_m_filtered["material_name"] + " (" + df_m_filtered["category"] + ")"
+                    pdf_mats = df_m_filtered[["formatted_date", "Description_PDF", "amount"]].rename(columns={"formatted_date": "Date", "Description_PDF": "Description", "amount": "Amount (Rs)"})
                     total_mat = pdf_mats["Amount (Rs)"].sum()
             
             # Show the fetched materials
@@ -993,6 +991,78 @@ elif current_tab == "🧾 Client Invoice":
                 st.info("No materials found in the database for this date range. Use the box below to add some!")
                 
             st.metric("Total Material Cost", f"₹{total_mat:,.2f}")
+            
+            # --- ⚙️ MANAGE MATERIALS PANEL ---
+            st.markdown("#### ⚙️ Manage Materials")
+            tab_add, tab_edit, tab_del = st.tabs(["➕ Add Material", "✏️ Edit Material", "🗑️ Delete Material"])
+            
+            # 1. ADD TAB
+            with tab_add:
+                with st.form("quick_add_mat"):
+                    c_qm1, c_qm2 = st.columns([1, 2])
+                    qm_date = c_qm1.date_input("Date of Purchase", inv_end, format="DD-MM-YYYY")
+                    qm_desc = c_qm2.text_input("Material Description", placeholder="e.g., Cement (50 Bags)")
+                    qm_amt = st.number_input("Amount (₹)", min_value=0.0, step=100.0)
+                    
+                    if st.form_submit_button("Save to Database", type="primary"):
+                        if qm_desc:
+                            load = {
+                                "date": str(qm_date), "site": inv_site, "category": "Client Billed",
+                                "vendor": "Client Invoice", "material_name": qm_desc,
+                                "quantity": 1, "amount": qm_amt, "receipt_url": ""
+                            }
+                            supabase.table("materials").insert(load).execute()
+                            st.success("✅ Saved! The invoice will automatically update.")
+                            time.sleep(1)
+                            st.rerun()
+                        else:
+                            st.error("Please enter a description.")
+                            
+            # 2. EDIT TAB
+            with tab_edit:
+                if not df_m_filtered.empty:
+                    # Create a dropdown to select the material to edit
+                    edit_options = {f"{row['formatted_date']} - {row['material_name']} - ₹{row['amount']}": row for _, row in df_m_filtered.iterrows()}
+                    sel_edit_key = st.selectbox("Select Material to Edit", list(edit_options.keys()))
+                    sel_edit_row = edit_options[sel_edit_key]
+                    
+                    with st.form("edit_mat_form"):
+                        c_e1, c_e2 = st.columns([1, 2])
+                        edit_date_obj = pd.to_datetime(sel_edit_row["date"]).date()
+                        e_date = c_e1.date_input("Update Date", edit_date_obj, format="DD-MM-YYYY")
+                        e_desc = c_e2.text_input("Update Description", value=sel_edit_row["material_name"])
+                        e_amt = st.number_input("Update Amount (₹)", value=float(sel_edit_row["amount"]), step=100.0)
+                        
+                        if st.form_submit_button("Update Material", type="primary"):
+                            update_load = {
+                                "date": str(e_date),
+                                "material_name": e_desc,
+                                "amount": e_amt
+                            }
+                            supabase.table("materials").update(update_load).eq("id", int(sel_edit_row["id"])).execute()
+                            st.success("✅ Material Updated!")
+                            time.sleep(1)
+                            st.rerun()
+                else:
+                    st.info("No materials available to edit in this date range.")
+                    
+            # 3. DELETE TAB
+            with tab_del:
+                if not df_m_filtered.empty:
+                    # Create a dropdown to select the material to delete
+                    del_options = {f"{row['formatted_date']} - {row['material_name']} - ₹{row['amount']}": row['id'] for _, row in df_m_filtered.iterrows()}
+                    sel_del = st.selectbox("Select Material to Delete", list(del_options.keys()))
+                    
+                    if st.button("🗑️ Delete Selected Material", type="primary"):
+                        del_id = del_options[sel_del]
+                        supabase.table("materials").delete().eq("id", int(del_id)).execute()
+                        st.success("✅ Material Deleted!")
+                        time.sleep(1)
+                        st.rerun()
+                else:
+                    st.info("No materials available to delete in this date range.")
+
+            st.divider()
             
             # QUICK ADD MATERIAL FORM
             with st.expander("➕ Missing a material? Quick-Save one here!"):
