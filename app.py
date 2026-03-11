@@ -1154,12 +1154,15 @@ elif current_tab == "🧾 Client Invoice":
                     c_qm1, c_qm2 = st.columns([1, 2])
                     qm_date = c_qm1.date_input("Date of Purchase", inv_end, format="DD-MM-YYYY")
                     qm_desc = c_qm2.text_input("Material Description", placeholder="e.g., Cement (50 Bags)")
-                    qm_amt = st.number_input("Amount (₹)", min_value=0.0, step=100.0)
+                    
+                    c_qm3, c_qm4 = st.columns(2)
+                    qm_cat = c_qm3.selectbox("Category Section", ["Civil", "Bill", "Transportation"])
+                    qm_amt = c_qm4.number_input("Amount (₹)", min_value=0.0, step=100.0)
                     
                     if st.form_submit_button("Save to Database", type="primary"):
                         if qm_desc:
                             load = {
-                                "date": str(qm_date), "site": inv_site, "category": "Client Billed",
+                                "date": str(qm_date), "site": inv_site, "category": qm_cat,
                                 "vendor": "Client Invoice", "material_name": qm_desc,
                                 "quantity": 1, "amount": qm_amt, "receipt_url": ""
                             }
@@ -1182,12 +1185,19 @@ elif current_tab == "🧾 Client Invoice":
                         edit_date_obj = pd.to_datetime(sel_edit_row["date"]).date()
                         e_date = c_e1.date_input("Update Date", edit_date_obj, format="DD-MM-YYYY")
                         e_desc = c_e2.text_input("Update Description", value=sel_edit_row["material_name"])
-                        e_amt = st.number_input("Update Amount (₹)", value=float(sel_edit_row["amount"]), step=100.0)
+                        
+                        c_e3, c_e4 = st.columns(2)
+                        cat_options = ["Civil", "Bill", "Transportation"]
+                        existing_cat = sel_edit_row.get("category", "Civil")
+                        cat_idx = cat_options.index(existing_cat) if existing_cat in cat_options else 0
+                        e_cat = c_e3.selectbox("Update Category", cat_options, index=cat_idx)
+                        e_amt = c_e4.number_input("Update Amount (₹)", value=float(sel_edit_row["amount"]), step=100.0)
                         
                         if st.form_submit_button("Update Material", type="primary"):
                             update_load = {
                                 "date": str(e_date),
                                 "material_name": e_desc,
+                                "category": e_cat,
                                 "amount": e_amt
                             }
                             supabase.table("materials").update(update_load).eq("id", int(sel_edit_row["id"])).execute()
