@@ -965,7 +965,8 @@ elif current_tab == "🧾 Client Invoice":
             
             # --- AUTO FETCH MATERIALS ---
             st.markdown("### Step 3: Auto-Fetched Materials")
-            st.caption(f"Showing materials saved to the database for **{inv_site}** between **{inv_start.strftime('%d %b')}** and **{inv_end.strftime('%d %b')}**.")
+            # Updated caption to also show dd-mm-yyyy
+            st.caption(f"Showing materials saved to the database for **{inv_site}** between **{inv_start.strftime('%d-%m-%Y')}** and **{inv_end.strftime('%d-%m-%Y')}**.")
             
             df_materials = fetch_data("materials")
             pdf_mats = pd.DataFrame(columns=["Date", "Description", "Amount (Rs)"])
@@ -977,9 +978,12 @@ elif current_tab == "🧾 Client Invoice":
                 df_m_filtered = df_materials[mask_m].copy()
                 
                 if not df_m_filtered.empty:
+                    # ---> FORMATTING THE DATE HERE <---
+                    df_m_filtered["formatted_date"] = pd.to_datetime(df_m_filtered["date"]).dt.strftime('%d-%m-%Y')
+                    
                     # Format exactly how the PDF expects it
                     df_m_filtered["Description"] = df_m_filtered["material_name"] + " (" + df_m_filtered["category"] + ")"
-                    pdf_mats = df_m_filtered[["date", "Description", "amount"]].rename(columns={"date": "Date", "amount": "Amount (Rs)"})
+                    pdf_mats = df_m_filtered[["formatted_date", "Description", "amount"]].rename(columns={"formatted_date": "Date", "amount": "Amount (Rs)"})
                     total_mat = pdf_mats["Amount (Rs)"].sum()
             
             # Show the fetched materials
