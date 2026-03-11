@@ -266,7 +266,10 @@ def generate_client_invoice_bytes(site_name, date_range_label, labor_cost, df_ma
     pdf.set_font("Arial", 'B', 11)
     pdf.set_text_color(0, 0, 0)
     pdf.set_fill_color(236, 240, 241)
-    pdf.cell(140, 10, "Material Description", 1, 0, 'C', fill=True)
+    
+    # Updated Headers to include Date
+    pdf.cell(30, 10, "Date", 1, 0, 'C', fill=True)
+    pdf.cell(110, 10, "Material Description", 1, 0, 'C', fill=True)
     pdf.cell(50, 10, "Amount", 1, 1, 'C', fill=True)
     
     pdf.set_font("Arial", '', 11)
@@ -275,10 +278,16 @@ def generate_client_invoice_bytes(site_name, date_range_label, labor_cost, df_ma
         for _, r in df_mats.iterrows():
             desc = str(r.get("Description", "")).strip()
             if not desc: continue
+            
+            # Fetch Date
+            m_date = str(r.get("Date", "")).strip()
+            
             try: amt = float(r.get("Amount (Rs)", 0))
             except: amt = 0.0
+            
             mat_total += amt
-            pdf.cell(140, 10, f" {desc[:70]}", 1, 0, 'L')
+            pdf.cell(30, 10, f"{m_date[:12]}", 1, 0, 'C')
+            pdf.cell(110, 10, f" {desc[:55]}", 1, 0, 'L')
             pdf.cell(50, 10, f"{amt:,.2f}", 1, 1, 'R')
     else:
         pdf.cell(190, 10, "No materials entered for this period.", 1, 1, 'C')
@@ -954,8 +963,10 @@ elif current_tab == "🧾 Client Invoice":
             st.divider()
             
             st.markdown("### Step 3: Add Materials")
-            st.caption("Type the material descriptions and costs directly into the grid below. It acts just like Excel! Add new rows at the bottom.")
-            init_df = pd.DataFrame([{"Description": "", "Amount (Rs)": 0.0} for _ in range(5)])
+            st.caption("Type the date, material descriptions, and costs directly into the grid below. It acts just like Excel! Add new rows at the bottom.")
+            
+            # ---> Added Date Column Here <---
+            init_df = pd.DataFrame([{"Date": "", "Description": "", "Amount (Rs)": 0.0} for _ in range(5)])
             edited_df = st.data_editor(init_df, num_rows="dynamic", use_container_width=True)
             
             total_mat = pd.to_numeric(edited_df["Amount (Rs)"], errors='coerce').fillna(0).sum()
