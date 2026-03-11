@@ -950,6 +950,7 @@ elif current_tab == "🧾 Client Invoice":
             
             st.divider()
             
+            # --- AUTO FETCH LABOR ---
             st.markdown("### Step 2: Auto-Calculated Labor")
             df_entries = fetch_data("entries")
             if not df_entries.empty:
@@ -962,34 +963,65 @@ elif current_tab == "🧾 Client Invoice":
             st.metric(f"Total Labor Cost for {inv_site}", f"₹{total_labor:,.2f}")
             st.divider()
             
-            st.markdown("### Step 3: Add Materials")
-            st.caption("Type the date, material descriptions, and costs directly into the grid below. It acts just like Excel! Add new rows at the bottom.")
+            # --- AUTO FETCH MATERIALS ---
+            st.markdown("### Step 3: Auto-Fetched Materials")
+            st.caption(f"Showing materials saved to the database for **{inv_site}** between **{inv_start.strftime('%d %b')}** and **{inv_end.strftime('%d %b')}**.")
             
-            # ---> NEW: MEMORY SAVE FEATURE <---
-            if "invoice_mats" not in st.session_state:
-                st.session_state.invoice_mats = pd.DataFrame([{"Date": "", "Description": "", "Amount (Rs)": 0.0} for _ in range(5)])
+            df_materials = fetch_data("materials")
+            pdf_mats = pd.DataFrame(columns=["Date", "Description", "Amount (Rs)"])
+            total_mat = 0
             
-            # The grid now saves to memory as you type
-            edited_df = st.data_editor(st.session_state.invoice_mats, num_rows="dynamic", use_container_width=True, key="inv_mat_grid")
-            st.session_state.invoice_mats = edited_df
+            if not df_materials.empty:
+                df_materials["date_dt"] = pd.to_datetime(df_materials["date"]).dt.date
+                mask_m = (df_materials["site"] == inv_site) & (df_materials["date_dt"] >= inv_start) & (df_materials["date_dt"] <= inv_end)
+                df_m_filtered = df_materials[mask_m].copy()
+                
+                if not df_m_filtered.empty:
+                    # Format exactly how the PDF expects it
+                    df_m_filtered["Description"] = df_m_filtered["material_name"] + " (" + df_m_filtered["category"] + ")"
+                    pdf_mats = df_m_filtered[["date", "Description", "amount"]].rename(columns={"date": "Date", "amount": "Amount (Rs)"})
+                    total_mat = pdf_mats["Amount (Rs)"].sum()
             
-            total_mat = pd.to_numeric(edited_df["Amount (Rs)"], errors='coerce').fillna(0).sum()
+            # Show the fetched materials
+            if not pdf_mats.empty:
+                st.dataframe(pdf_mats, use_container_width=True, hide_index=True)
+            else:
+                st.info("No materials found in the database for this date range. Use the box below to add some!")
+                
             st.metric("Total Material Cost", f"₹{total_mat:,.2f}")
             
-            # New button to clear the memory when you are done
-            if st.button("🧹 Clear Table for Next Invoice"):
-                st.session_state.invoice_mats = pd.DataFrame([{"Date": "", "Description": "", "Amount (Rs)": 0.0} for _ in range(5)])
-                st.rerun()
+            # QUICK ADD MATERIAL FORM
+            with st.expander("➕ Missing a material? Quick-Save one here!"):
+                with st.form("quick_add_mat"):
+                    c_qm1, c_qm2 = st.columns([1, 2])
+                    qm_date = c_qm1.date_input("Date of Purchase", inv_end)
+                    qm_desc = c_qm2.text_input("Material Description", placeholder="e.g., Cement (50 Bags)")
+                    qm_amt = st.number_input("Amount (₹)", min_value=0.0, step=100.0)
+                    
+                    if st.form_submit_button("Save to Database", type="primary"):
+                        if qm_desc:
+                            load = {
+                                "date": str(qm_date), "site": inv_site, "category": "Client Billed",
+                                "vendor": "Client Invoice", "material_name": qm_desc,
+                                "quantity": 1, "amount": qm_amt, "receipt_url": ""
+                            }
+                            supabase.table("materials").insert(load).execute()
+                            st.success("✅ Saved! The invoice will automatically update.")
+                            time.sleep(1)
+                            st.rerun()
+                        else:
+                            st.error("Please enter a description.")
 
             st.divider()
             
+            # --- GENERATE PDF ---
             grand_total = total_labor + total_mat
             st.markdown(f"## 💰 Grand Total: ₹{grand_total:,.2f}")
             
             if st.button("📄 Generate Professional Invoice", type="primary", use_container_width=True):
                 date_label = f"{inv_start.strftime('%d-%m-%Y')} to {inv_end.strftime('%d-%m-%Y')}"
                 with st.spinner("Generating beautiful PDF..."):
-                    pdf_bytes = generate_client_invoice_bytes(inv_site, date_label, total_labor, edited_df, grand_total)
+                    pdf_bytes = generate_client_invoice_bytes(inv_site, date_label, total_labor, pdf_mats, grand_total)
                 st.success("✅ Invoice Generated!")
                 st.download_button(
                     label="⬇️ Download Client Invoice (PDF)", data=pdf_bytes, 
