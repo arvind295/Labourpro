@@ -14,7 +14,7 @@ st.set_page_config(
     page_title="LabourPro", 
     page_icon="🏗️", 
     layout="wide", 
-    initial_sidebar_state="collapsed"
+    initial_sidebar_state="expanded"
 )
 
 # LOAD SECRETS (Password Management)
@@ -51,26 +51,118 @@ cookie_manager = get_manager()
 def apply_custom_styling():
     st.markdown("""
         <style>
-        * { color: #000000 !important; }
-        .stApp { background-color: #FFFFFF !important; }
-        section[data-testid="stSidebar"] { background-color: #F8F9FA !important; border-right: 1px solid #E0E0E0; }
-        section[data-testid="stSidebar"] * { color: #000000 !important; }
-        input, textarea, select, div[data-baseweb="select"] > div {
-            background-color: #FFFFFF !important; 
-            color: #000000 !important; 
-            border: 1px solid #ccc !important; 
+        /* === BASE === */
+        html, body, [class*="css"] { font-family: 'Segoe UI', system-ui, sans-serif; }
+        .stApp { background-color: #F0F2F6 !important; }
+
+        /* === DARK SIDEBAR === */
+        section[data-testid="stSidebar"] {
+            background: linear-gradient(180deg, #1A2332 0%, #243447 100%) !important;
+            border-right: none !important;
         }
-        span[data-baseweb="tag"] { background-color: #E0E0E0 !important; color: black !important; }
-        div[data-testid="stDataFrame"], div[data-testid="stTable"] { color: #000000 !important; background-color: #FFFFFF !important; }
-        th { background-color: #E0E0E0 !important; border-bottom: 2px solid #000 !important; }
-        td { border-bottom: 1px solid #ddd !important; }
-        button[kind="primary"] { background-color: #F39C12 !important; color: #FFFFFF !important; border: none !important; }
-        button[disabled] { background-color: #cccccc !important; color: #666666 !important; cursor: not-allowed; }
-        div[data-testid="stMetricValue"] { font-size: 1.4rem !important; color: #F39C12 !important; }
-        div[data-testid="stMetricLabel"] { font-size: 1rem !important; color: #333333 !important; }
+        section[data-testid="stSidebar"] p,
+        section[data-testid="stSidebar"] span,
+        section[data-testid="stSidebar"] label,
+        section[data-testid="stSidebar"] div { color: #CBD5E0 !important; }
+        section[data-testid="stSidebar"] h1,
+        section[data-testid="stSidebar"] h2,
+        section[data-testid="stSidebar"] h3 { color: #FFFFFF !important; }
+
+        /* Sidebar nav buttons */
+        section[data-testid="stSidebar"] .stButton > button {
+            background-color: rgba(255,255,255,0.06) !important;
+            border: 1px solid rgba(255,255,255,0.08) !important;
+            color: #CBD5E0 !important;
+            border-radius: 8px !important;
+            text-align: left !important;
+            padding: 0.55rem 1rem !important;
+            margin-bottom: 3px !important;
+            font-size: 0.92rem !important;
+            width: 100% !important;
+            transition: all 0.15s ease !important;
+        }
+        section[data-testid="stSidebar"] .stButton > button:hover {
+            background-color: rgba(243,156,18,0.2) !important;
+            border-color: rgba(243,156,18,0.5) !important;
+            color: #FFFFFF !important;
+        }
+        section[data-testid="stSidebar"] hr { border-color: rgba(255,255,255,0.1) !important; }
+        section[data-testid="stSidebar"] .stAlert { background-color: rgba(255,255,255,0.08) !important; border: none !important; }
+        section[data-testid="stSidebar"] input {
+            background-color: rgba(255,255,255,0.1) !important;
+            color: #FFFFFF !important;
+            border: 1px solid rgba(255,255,255,0.2) !important;
+        }
+
+        /* === INPUTS & SELECTS === */
+        input, textarea, select, div[data-baseweb="select"] > div {
+            background-color: #FFFFFF !important;
+            color: #1A202C !important;
+            border: 1px solid #D1D5DB !important;
+            border-radius: 6px !important;
+        }
+        input:focus, textarea:focus { border-color: #F39C12 !important; box-shadow: 0 0 0 2px rgba(243,156,18,0.15) !important; }
+
+        /* === PRIMARY BUTTONS === */
+        button[kind="primary"] {
+            background: linear-gradient(135deg, #F39C12, #E67E22) !important;
+            color: #FFFFFF !important;
+            border: none !important;
+            border-radius: 8px !important;
+            font-weight: 600 !important;
+            letter-spacing: 0.02em !important;
+        }
+        button[kind="primary"]:hover { filter: brightness(1.08) !important; }
+        button[disabled] { background: #D1D5DB !important; color: #9CA3AF !important; cursor: not-allowed !important; }
+
+        /* === METRICS === */
+        div[data-testid="stMetricValue"] { font-size: 1.5rem !important; color: #F39C12 !important; font-weight: 700 !important; }
+        div[data-testid="stMetricLabel"] { font-size: 0.85rem !important; color: #6B7280 !important; font-weight: 500 !important; }
+        div[data-testid="metric-container"] {
+            background: #FFFFFF !important;
+            border-radius: 12px !important;
+            padding: 1.1rem 1.2rem !important;
+            border: 1px solid #E5E7EB !important;
+            box-shadow: 0 1px 6px rgba(0,0,0,0.06) !important;
+        }
+
+        /* === DATAFRAMES === */
+        div[data-testid="stDataFrame"] { border-radius: 10px !important; overflow: hidden !important; border: 1px solid #E5E7EB !important; box-shadow: 0 1px 6px rgba(0,0,0,0.05) !important; }
+        th { background-color: #F39C12 !important; color: #FFFFFF !important; font-weight: 600 !important; border-bottom: 2px solid #E67E22 !important; }
+        td { border-bottom: 1px solid #F3F4F6 !important; color: #1A202C !important; }
+
+        /* === TAGS / PILLS === */
+        span[data-baseweb="tag"] { background-color: #F39C12 !important; color: #FFFFFF !important; border-radius: 20px !important; font-weight: 500 !important; }
+
+        /* === PAGE TITLE HELPER CLASSES === */
+        .lp-page-header {
+            background: #FFFFFF;
+            border-radius: 12px;
+            padding: 1.2rem 1.5rem;
+            margin-bottom: 1.2rem;
+            border-left: 4px solid #F39C12;
+            box-shadow: 0 1px 6px rgba(0,0,0,0.05);
+        }
+        .lp-page-title { font-size: 1.5rem; font-weight: 700; color: #1A2332; margin: 0; }
+        .lp-page-subtitle { font-size: 0.9rem; color: #6B7280; margin-top: 0.2rem; }
+
+        /* === DIVIDER === */
+        hr { border-color: #E5E7EB !important; }
+
+        /* === EXPANDERS === */
+        div[data-testid="stExpander"] { background: #FFFFFF !important; border-radius: 10px !important; border: 1px solid #E5E7EB !important; }
+
+        /* === TABS === */
+        button[data-baseweb="tab"] { font-weight: 500 !important; }
+        button[data-baseweb="tab"][aria-selected="true"] { color: #F39C12 !important; border-bottom-color: #F39C12 !important; }
+
+        /* === SUCCESS / ERROR / INFO ALERTS === */
+        div[data-testid="stAlert"] { border-radius: 8px !important; }
+
+        /* === MOBILE === */
         @media only screen and (max-width: 600px) {
-            h1 { font-size: 1.8rem !important; }
-            .stButton button { width: 100% !important; }
+            h1 { font-size: 1.5rem !important; }
+            .lp-page-title { font-size: 1.2rem; }
         }
         </style>
     """, unsafe_allow_html=True)
@@ -189,8 +281,6 @@ def generate_material_pdf_bytes(site_name, period_label, df_mat):
             pdf.set_fill_color(220, 220, 220)
             pdf.set_font("Arial", 'B', 12)
             pdf.cell(0, 10, f"{cat}", 0, 1, 'L', fill=True)
-
-            # Table Header
             pdf.set_font("Arial", 'B', 9)
             pdf.cell(25, 8, "Date", 1)
             pdf.cell(50, 8, "Vendor", 1)
@@ -198,17 +288,12 @@ def generate_material_pdf_bytes(site_name, period_label, df_mat):
             pdf.cell(15, 8, "Qty", 1)
             pdf.cell(20, 8, "Amount", 1)
             pdf.ln()
-
-            # Table Rows
             pdf.set_font("Arial", '', 9)
             cat_total = 0
             for _, row in df_cat.iterrows():
                 pdf.cell(25, 8, str(row.get('date', '')), 1)
-                
-                # Truncate strings to prevent PDF layout breaking
                 vendor = str(row.get('vendor', ''))[:22]
                 material = str(row.get('material_name', ''))[:40]
-                
                 pdf.cell(50, 8, vendor, 1)
                 pdf.cell(80, 8, material, 1)
                 pdf.cell(15, 8, str(row.get('quantity', '')), 1)
@@ -216,15 +301,12 @@ def generate_material_pdf_bytes(site_name, period_label, df_mat):
                 cat_total += amt
                 pdf.cell(20, 8, f"{amt:,.0f}", 1)
                 pdf.ln()
-
-            # Category Total
             pdf.set_font("Arial", 'B', 9)
             pdf.cell(170, 8, f"Total {cat}", 1, 0, 'R')
             pdf.cell(20, 8, f"{cat_total:,.0f}", 1, 1, 'L')
             pdf.ln(8)
             total_grand += cat_total
 
-    # Grand Total
     if total_grand > 0:
         pdf.set_font("Arial", 'B', 14)
         pdf.cell(0, 10, f"Grand Total: Rs. {total_grand:,.2f}", 0, 1, 'R')
@@ -247,7 +329,6 @@ class ClientInvoicePDF(FPDF):
 def generate_client_invoice_bytes(site_name, date_range_label, labor_details, df_mats, grand_total):
     pdf = ClientInvoicePDF()
     pdf.add_page()
-    
     pdf.set_font("Arial", 'B', 12)
     pdf.set_text_color(44, 62, 80)
     pdf.cell(100, 8, f"Project Site: {site_name}", 0, 0, 'L')
@@ -255,13 +336,10 @@ def generate_client_invoice_bytes(site_name, date_range_label, labor_details, df
     pdf.cell(90, 8, f"Date Generated: {date.today().strftime('%d %b %Y')}", 0, 1, 'R')
     pdf.cell(100, 8, f"Billing Period: {date_range_label}", 0, 1, 'L')
     pdf.ln(10)
-    
-    # --- Section 1: Labor ---
     pdf.set_font("Arial", 'B', 14)
     pdf.set_fill_color(52, 73, 94)
     pdf.set_text_color(255, 255, 255)
     pdf.cell(0, 10, " 1. LABOR EXPENSES", 0, 1, 'L', fill=True)
-    
     pdf.set_text_color(0, 0, 0)
     pdf.set_font("Arial", 'B', 11)
     pdf.set_fill_color(236, 240, 241)
@@ -269,36 +347,28 @@ def generate_client_invoice_bytes(site_name, date_range_label, labor_details, df
     pdf.cell(45, 10, "Total Shifts", 1, 0, 'C', fill=True)
     pdf.cell(45, 10, "Rate (Rs)", 1, 0, 'C', fill=True)
     pdf.cell(50, 10, "Amount (Rs)", 1, 1, 'C', fill=True)
-    
     pdf.set_font("Arial", '', 11)
-    
     if labor_details['m_count'] > 0:
         pdf.cell(50, 10, " Masons", 1, 0, 'L')
         pdf.cell(45, 10, f"{labor_details['m_count']}", 1, 0, 'C')
         pdf.cell(45, 10, f"{labor_details['m_rate']:,.2f}", 1, 0, 'C')
         pdf.cell(50, 10, f"{(labor_details['m_count'] * labor_details['m_rate']):,.2f}", 1, 1, 'R')
-        
     if labor_details['h_count'] > 0:
         pdf.cell(50, 10, " Helpers", 1, 0, 'L')
         pdf.cell(45, 10, f"{labor_details['h_count']}", 1, 0, 'C')
         pdf.cell(45, 10, f"{labor_details['h_rate']:,.2f}", 1, 0, 'C')
         pdf.cell(50, 10, f"{(labor_details['h_count'] * labor_details['h_rate']):,.2f}", 1, 1, 'R')
-        
     if labor_details['l_count'] > 0:
         pdf.cell(50, 10, " Ladies", 1, 0, 'L')
         pdf.cell(45, 10, f"{labor_details['l_count']}", 1, 0, 'C')
         pdf.cell(45, 10, f"{labor_details['l_rate']:,.2f}", 1, 0, 'C')
         pdf.cell(50, 10, f"{(labor_details['l_count'] * labor_details['l_rate']):,.2f}", 1, 1, 'R')
-
     if labor_details['m_count'] == 0 and labor_details['h_count'] == 0 and labor_details['l_count'] == 0:
         pdf.cell(190, 10, "No labor entered for this period.", 1, 1, 'C')
-        
     pdf.set_font("Arial", 'B', 11)
     pdf.cell(140, 10, "Total Labor Cost:", 1, 0, 'R', fill=True)
     pdf.cell(50, 10, f"Rs. {labor_details['total']:,.2f}", 1, 1, 'R', fill=True)
     pdf.ln(10)
-    
-    # --- Section 2: Materials ---
     pdf.set_font("Arial", 'B', 14)
     pdf.set_fill_color(52, 73, 94)
     pdf.set_text_color(255, 255, 255)
@@ -306,42 +376,33 @@ def generate_client_invoice_bytes(site_name, date_range_label, labor_details, df
     pdf.set_font("Arial", 'B', 11)
     pdf.set_text_color(0, 0, 0)
     pdf.set_fill_color(236, 240, 241)
-    
-    # Headers to include Date
     pdf.cell(30, 10, "Date", 1, 0, 'C', fill=True)
     pdf.cell(110, 10, "Material Description", 1, 0, 'C', fill=True)
     pdf.cell(50, 10, "Amount", 1, 1, 'C', fill=True)
-    
     pdf.set_font("Arial", '', 11)
     mat_total = 0
     if not df_mats.empty:
         for _, r in df_mats.iterrows():
             desc = str(r.get("Description", "")).strip()
             if not desc: continue
-            
             m_date = str(r.get("Date", "")).strip()
             try: amt = float(r.get("Amount (Rs)", 0))
             except: amt = 0.0
-            
             mat_total += amt
             pdf.cell(30, 10, f"{m_date[:12]}", 1, 0, 'C')
             pdf.cell(110, 10, f" {desc[:55]}", 1, 0, 'L')
             pdf.cell(50, 10, f"{amt:,.2f}", 1, 1, 'R')
     else:
         pdf.cell(190, 10, "No materials entered for this period.", 1, 1, 'C')
-        
     pdf.set_font("Arial", 'B', 11)
     pdf.cell(140, 10, "Total Material Cost:", 1, 0, 'R', fill=True)
     pdf.cell(50, 10, f"Rs. {mat_total:,.2f}", 1, 1, 'R', fill=True)
     pdf.ln(15)
-    
-    # --- Grand Total ---
     pdf.set_font("Arial", 'B', 16)
     pdf.set_fill_color(46, 204, 113)
     pdf.set_text_color(255, 255, 255)
     pdf.cell(140, 15, " GRAND TOTAL DUE:", 1, 0, 'R', fill=True)
     pdf.cell(50, 15, f"Rs. {grand_total:,.2f}", 1, 1, 'R', fill=True)
-    
     return pdf.output(dest='S').encode('latin-1')
 
 # --- WEEKLY BILL RENDERER ---
@@ -401,7 +462,6 @@ def render_weekly_bill(df_entries, df_contractors):
             for con_name in df_view["contractor"].unique():
                 df_sub = df_view[df_view["contractor"] == con_name]
                 entry_map = {d.date(): r for d, r in zip(df_sub["date_dt"], df_sub.to_dict('records'))}
-                
                 rates = df_contractors[df_contractors["name"] == con_name].sort_values("effective_date", ascending=False)
                 rm, rh, rl = 0, 0, 0
                 if not rates.empty:
@@ -411,7 +471,6 @@ def render_weekly_bill(df_entries, df_contractors):
 
                 rows = []
                 tm, th, tl, tamt = 0, 0, 0, 0
-                
                 for day_date in full_week_dates:
                     if day_date in entry_map:
                         r = entry_map[day_date]
@@ -424,7 +483,6 @@ def render_weekly_bill(df_entries, df_contractors):
                     else:
                         m, h, l, current_daily_cost = 0, 0, 0, 0
                         dm, dh, dl = "0", "0", "0"
-                    
                     rows.append({"Date": day_date.strftime("%d-%m-%Y"), "Mason": dm, "Helper": dh, "Ladies": dl})
                     tm += m
                     th += h
@@ -432,18 +490,15 @@ def render_weekly_bill(df_entries, df_contractors):
                     tamt += current_daily_cost  
 
                 pdf_data.append({"name": con_name, "rows": rows, "totals": {"m": tm, "h": th, "l": tl, "amt": tamt}, "rates": {"rm": rm, "rh": rh, "rl": rl}})
-
                 st.markdown(f"#### 👷 {con_name}")
                 if is_admin:
                     k1, k2, k3, k4 = st.columns(4)
                     k1.metric("💰 Payable", f"₹{tamt:,.0f}")
                 else:
                     k2, k3, k4 = st.columns(3)
-                
                 k2.metric("🧱 Masons", f"{tm}")
                 k3.metric("🛠️ Helpers", f"{th}")
                 k4.metric("👩 Ladies", f"{tl}")
-                
                 with st.expander(f"📄 Details: {con_name}"):
                     st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
 
@@ -466,7 +521,6 @@ def render_weekly_bill(df_entries, df_contractors):
             for site_name in df_view["site"].unique():
                 df_sub = df_view[df_view["site"] == site_name]
                 entry_map = {d.date(): r for d, r in zip(df_sub["date_dt"], df_sub.to_dict('records'))}
-                
                 rates = df_contractors[df_contractors["name"] == sel_con].sort_values("effective_date", ascending=False)
                 rm, rh, rl = 0, 0, 0
                 if not rates.empty:
@@ -476,7 +530,6 @@ def render_weekly_bill(df_entries, df_contractors):
 
                 rows = []
                 tm, th, tl, tamt = 0, 0, 0, 0
-                
                 for day_date in full_week_dates:
                     if day_date in entry_map:
                         r = entry_map[day_date]
@@ -489,7 +542,6 @@ def render_weekly_bill(df_entries, df_contractors):
                     else:
                         m, h, l, current_daily_cost = 0, 0, 0, 0
                         dm, dh, dl = "0", "0", "0"
-                    
                     rows.append({"Date": day_date.strftime("%d-%m-%Y"), "Mason": dm, "Helper": dh, "Ladies": dl})
                     tm += m
                     th += h
@@ -497,18 +549,15 @@ def render_weekly_bill(df_entries, df_contractors):
                     tamt += current_daily_cost
 
                 pdf_data.append({"name": site_name, "rows": rows, "totals": {"m": tm, "h": th, "l": tl, "amt": tamt}, "rates": {"rm": rm, "rh": rh, "rl": rl}})
-
                 st.markdown(f"#### 📍 {site_name}")
                 if is_admin:
                     k1, k2, k3, k4 = st.columns(4)
                     k1.metric("💰 Payable", f"₹{tamt:,.0f}")
                 else:
                     k2, k3, k4 = st.columns(3)
-
                 k2.metric("🧱 Masons", f"{tm}")
                 k3.metric("🛠️ Helpers", f"{th}")
                 k4.metric("👩 Ladies", f"{tl}")
-                
                 with st.expander(f"📄 Details: {site_name}"):
                     st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
 
@@ -549,47 +598,61 @@ if not st.session_state["logged_in"] and stored_token:
 
 # --- 7. LOGIN PROCESS ---
 def login_process():
-    col1, col2, col3 = st.columns([1, 10, 1])
+    col1, col2, col3 = st.columns([1, 2, 1])
     with col2:
-        st.markdown("<br><h1 style='text-align: center; color: black;'>🏗️ LabourPro</h1><p style='text-align: center; color: grey;'>Site Entry Portal</p><hr>", unsafe_allow_html=True)
-        st.subheader("👷 Team Login")
-        with st.form("u_log"):
-            ph = st.text_input("Enter Mobile Number", max_chars=10, placeholder="9876543210")
-            pin = st.text_input("Enter 4-Digit PIN", type="password", max_chars=4, placeholder="****")
-            if st.form_submit_button("🚀 Login", type="primary", use_container_width=True):
-                if ph and pin:
-                    try:
-                        response = supabase.table("users").select("*").eq("phone", ph).execute()
-                        if not response.data:
-                            st.error("❌ User not found.")
-                        else:
-                            user = response.data[0]
-                            user_mpin = user.get("mpin", "1234")
-                            if user_mpin is None: user_mpin = "1234"
-                            if str(pin) != str(user_mpin):
-                                st.error("❌ Incorrect PIN")
-                            elif user.get("status") == "Resigned":
-                                st.error("⛔ Account Deactivated.")
-                            elif user.get("role") == "admin":
-                                st.error("⚠️ Admins: Please use the 'Admin Login' below.")
+        st.markdown("""
+            <div style='text-align:center; padding: 2.5rem 0 1.5rem 0;'>
+                <div style='font-size:3.5rem;'>🏗️</div>
+                <h1 style='font-size:2.2rem; font-weight:800; color:#1A2332; margin:0.3rem 0 0.2rem 0;'>LabourPro</h1>
+                <p style='color:#6B7280; font-size:1rem; margin:0;'>Construction Site Management Portal</p>
+            </div>
+        """, unsafe_allow_html=True)
+
+        st.markdown("""
+            <div style='background:#FFFFFF; border-radius:16px; padding:2rem; 
+                        box-shadow:0 4px 24px rgba(0,0,0,0.08); border:1px solid #E5E7EB; margin-bottom:1rem;'>
+                <h3 style='color:#1A2332; margin-top:0; font-size:1.1rem;'>👷 Team Login</h3>
+            </div>
+        """, unsafe_allow_html=True)
+
+        with st.container():
+            with st.form("u_log"):
+                ph = st.text_input("📱 Mobile Number", max_chars=10, placeholder="Enter your 10-digit number")
+                pin = st.text_input("🔒 4-Digit PIN", type="password", max_chars=4, placeholder="••••")
+                if st.form_submit_button("Login  →", type="primary", use_container_width=True):
+                    if ph and pin:
+                        try:
+                            response = supabase.table("users").select("*").eq("phone", ph).execute()
+                            if not response.data:
+                                st.error("❌ User not found.")
                             else:
-                                new_token = str(uuid.uuid4())
-                                supabase.table("users").update({"session_token": new_token}).eq("phone", ph).execute()
-                                cookie_manager.set("auth_token", new_token, expires_at=datetime.now() + timedelta(days=30))
-                                st.session_state.update({
-                                    "logged_in": True, 
-                                    "phone": user["phone"], 
-                                    "role": "user",
-                                    "user_name": user["name"],
-                                    "assigned_site": user.get("assigned_site", "All")
-                                })
-                                st.success("Logged In!")
-                                time.sleep(1)
-                                st.rerun()
-                    except Exception as e:
-                        st.warning("⚠️ Connection error. Try again.")
-                else:
-                    st.warning("Please enter Phone and PIN.")
+                                user = response.data[0]
+                                user_mpin = user.get("mpin", "1234")
+                                if user_mpin is None: user_mpin = "1234"
+                                if str(pin) != str(user_mpin):
+                                    st.error("❌ Incorrect PIN")
+                                elif user.get("status") == "Resigned":
+                                    st.error("⛔ Account Deactivated.")
+                                elif user.get("role") == "admin":
+                                    st.error("⚠️ Admins: Please use the 'Admin Login' below.")
+                                else:
+                                    new_token = str(uuid.uuid4())
+                                    supabase.table("users").update({"session_token": new_token}).eq("phone", ph).execute()
+                                    cookie_manager.set("auth_token", new_token, expires_at=datetime.now() + timedelta(days=30))
+                                    st.session_state.update({
+                                        "logged_in": True, 
+                                        "phone": user["phone"], 
+                                        "role": "user",
+                                        "user_name": user["name"],
+                                        "assigned_site": user.get("assigned_site", "All")
+                                    })
+                                    st.success("✅ Logged In!")
+                                    time.sleep(1)
+                                    st.rerun()
+                        except Exception as e:
+                            st.warning("⚠️ Connection error. Try again.")
+                    else:
+                        st.warning("Please enter your Phone and PIN.")
 
         st.markdown("<br>", unsafe_allow_html=True)
         with st.expander("🔐 Admin Login"):
@@ -625,9 +688,40 @@ if not st.session_state["logged_in"]:
     login_process()
     st.stop()
 
-# --- 8. SIDEBAR LOGOUT & SETTINGS ---
+# --- 8. SIDEBAR: USER PANEL + NAVIGATION ---
+tabs = ["📝 Daily Entry", "📊 Weekly Bill", "🧱 Materials", "📓 My Diary"]
+if st.session_state["role"] == "admin": 
+    tabs += ["📈 Dashboard", "🧾 Client Invoice", "🔍 Site Logs", "📍 Sites", "👷 Contractors", "👥 Users", "📂 Archive & Recovery"]
+
+if "current_tab" not in st.session_state or st.session_state["current_tab"] not in tabs:
+    st.session_state["current_tab"] = tabs[0]
+
 with st.sidebar:
-    st.info(f"Role: **{st.session_state['role'].upper()}**")
+    st.markdown("""
+        <div style='text-align:center; padding: 1rem 0 0.5rem 0;'>
+            <div style='font-size:2rem;'>🏗️</div>
+            <div style='font-size:1.2rem; font-weight:700; color:#FFFFFF; letter-spacing:0.05em;'>LabourPro</div>
+        </div>
+    """, unsafe_allow_html=True)
+    
+    role_badge = "🛡️ Admin" if st.session_state["role"] == "admin" else "👷 User"
+    user_name = st.session_state.get("user_name", "User")
+    st.markdown(f"""
+        <div style='background:rgba(243,156,18,0.15); border:1px solid rgba(243,156,18,0.3); 
+                    border-radius:10px; padding:0.75rem 1rem; margin:0.5rem 0 1rem 0;'>
+            <div style='font-size:0.75rem; color:#F39C12; font-weight:600; text-transform:uppercase; letter-spacing:0.05em;'>{role_badge}</div>
+            <div style='font-size:1rem; font-weight:700; color:#FFFFFF; margin-top:0.1rem;'>{user_name}</div>
+        </div>
+    """, unsafe_allow_html=True)
+    
+    st.markdown("<div style='font-size:0.72rem; color:#6B7280; font-weight:600; text-transform:uppercase; letter-spacing:0.1em; margin-bottom:0.5rem;'>NAVIGATION</div>", unsafe_allow_html=True)
+    for tab in tabs:
+        if st.button(tab, key=f"nav_{tab}", use_container_width=True):
+            st.session_state["current_tab"] = tab
+            st.rerun()
+
+    st.divider()
+    
     if st.session_state["role"] == "user":
         with st.expander("🔐 Change My PIN"):
             new_pin = st.text_input("New 4-Digit PIN", max_chars=4, type="password", key="new_u_pin")
@@ -640,8 +734,9 @@ with st.sidebar:
                         st.error("Error updating PIN.")
                 else:
                     st.error("PIN must be 4 digits.")
-    st.divider()
-    if st.button("Logout"):
+        st.markdown("<br>", unsafe_allow_html=True)
+    
+    if st.button("🚪 Logout", use_container_width=True):
         if st.session_state.get("phone"):
             try:
                 supabase.table("users").update({"session_token": None}).eq("phone", st.session_state["phone"]).execute()
@@ -655,18 +750,24 @@ with st.sidebar:
         time.sleep(1)
         st.rerun()
 
-# --- 9. MAIN APP NAVIGATION ---
-tabs = ["📝 Daily Entry", "📊 Weekly Bill", "🧱 Materials", "📓 My Diary"]
-if st.session_state["role"] == "admin": 
-    tabs += ["📈 Dashboard", "🧾 Client Invoice", "🔍 Site Logs", "📍 Sites", "👷 Contractors", "👥 Users", "📂 Archive & Recovery"]
+current_tab = st.session_state["current_tab"]
 
-current_tab = st.selectbox("Navigate", tabs, label_visibility="collapsed")
-st.divider()
+# --- 9. PAGE HEADER HELPER ---
+def page_header(title, subtitle=""):
+    sub_html = f"<div class='lp-page-subtitle'>{subtitle}</div>" if subtitle else ""
+    st.markdown(f"""
+        <div class='lp-page-header'>
+            <div class='lp-page-title'>{title}</div>
+            {sub_html}
+        </div>
+    """, unsafe_allow_html=True)
+
 
 # ==============================================================================
 # TAB 1: DAILY ENTRY
 # ==============================================================================
 if current_tab == "📝 Daily Entry":
+    page_header("📝 Daily Entry", "Log today's workforce attendance for your site")
     df_sites = fetch_data("sites")
     df_con = fetch_data("contractors")
     
@@ -741,7 +842,6 @@ if current_tab == "📝 Daily Entry":
                 nl = c6.number_input("Ladies", value=vl, step=0.5)
                 wdesc = st.text_area("Description", value=vd)
 
-                # PHOTO UPLOAD
                 uploaded_photo = st.file_uploader("📸 Upload Site Photo (Optional)", type=["jpg", "jpeg", "png", "webp"])
 
                 rate_row = None
@@ -805,7 +905,7 @@ if current_tab == "📝 Daily Entry":
 # TAB 2: WEEKLY BILL
 # ==============================================================================
 elif current_tab == "📊 Weekly Bill":
-    st.subheader("📊 Weekly Bill")
+    page_header("📊 Weekly Bill", "View and download weekly labour payment bills")
     try:
         df_entries = fetch_data("entries")
     except:
@@ -816,7 +916,7 @@ elif current_tab == "📊 Weekly Bill":
 # TAB 3: MATERIALS
 # ==============================================================================
 elif current_tab == "🧱 Materials":
-    st.subheader("🧱 Material Tracking")
+    page_header("🧱 Materials", "Track material purchases and generate reports")
     df_sites = fetch_data("sites")
     if df_sites.empty:
         st.warning("Please add sites first.")
@@ -855,17 +955,14 @@ elif current_tab == "🧱 Materials":
                     unique_weeks = df_mat[["start_date", "week_label"]].drop_duplicates().sort_values("start_date", ascending=False)
                     weeks = unique_weeks["week_label"].tolist()
 
-            # Week Filter Selection
             st.markdown("### 📅 Filter & Download Report")
             sel_week = st.selectbox("Select Time Period to View & Download", ["All Time"] + weeks)
             
-            # Filter the dataframe based on the selection for displaying & PDF
             if sel_week != "All Time" and not df_mat.empty:
                 df_mat_filtered = df_mat[df_mat["week_label"] == sel_week].copy()
             else:
                 df_mat_filtered = df_mat.copy()
 
-            # PDF Download Button (Visible to everyone)
             if not df_mat_filtered.empty:
                 try:
                     pdf_bytes = generate_material_pdf_bytes(sel_site, sel_week, df_mat_filtered)
@@ -883,7 +980,6 @@ elif current_tab == "🧱 Materials":
                 
             st.divider()
 
-            # Tabs for Entry & Viewing
             categories = ["Civil Material", "Steel Material", "Soil Material", "RMC"]
             mat_tabs = st.tabs(categories)
 
@@ -898,7 +994,6 @@ elif current_tab == "🧱 Materials":
                         c4, c5 = st.columns(2)
                         m_qty = c4.number_input("Quantity", min_value=0.0, step=1.0, key=f"q_{cat}")
                         m_amt = c5.number_input("Total Amount (₹)", min_value=0.0, step=100.0, key=f"a_{cat}")
-                        
                         m_receipt = st.file_uploader("🧾 Upload Bill/Receipt Image (Optional)", type=["jpg", "jpeg", "png"], key=f"rec_{cat}")
 
                         if st.form_submit_button("Save Material Entry", type="primary", use_container_width=True):
@@ -909,7 +1004,6 @@ elif current_tab == "🧱 Materials":
                                 if m_receipt:
                                     with st.spinner("Uploading receipt..."):
                                         receipt_link = upload_evidence(m_receipt)
-
                                 load = {
                                     "date": str(m_date), "site": sel_site, "category": cat,
                                     "vendor": m_vendor, "material_name": m_material,
@@ -927,13 +1021,10 @@ elif current_tab == "🧱 Materials":
                     st.markdown(f"### 📋 {cat} Entries ({sel_week})")
                     if not df_mat_filtered.empty:
                         df_cat = df_mat_filtered[df_mat_filtered["category"] == cat].copy()
-                        
                         if not df_cat.empty:
                             df_cat = df_cat.sort_values("date_dt", ascending=False)
-                            # Show total cost for both Admin and User in this view for clarity
                             total_spent = df_cat["amount"].sum()
                             st.metric(f"Total Spent on {cat}", f"₹{total_spent:,.2f}")
-                            
                             display_df = df_cat[["date", "vendor", "material_name", "quantity", "amount"]].rename(
                                 columns={"date": "Date", "vendor": "Vendor", "material_name": "Material", "quantity": "Quantity", "amount": "Amount (₹)"}
                             )
@@ -947,7 +1038,7 @@ elif current_tab == "🧱 Materials":
 # TAB 4: MY DIARY
 # ==============================================================================
 elif current_tab == "📓 My Diary":
-    st.subheader("📓 My Personal Diary")
+    page_header("📓 My Diary", "Private notes and site observations — visible only to you")
     st.write("Use this space to jot down private notes, reminders, or site observations.")
 
     user_phone = st.session_state.get("phone")
@@ -958,7 +1049,6 @@ elif current_tab == "📓 My Diary":
     with st.form("diary_form"):
         d_date = st.date_input("Date", date.today(), format="DD-MM-YYYY")
         d_content = st.text_area("Write your note here...", height=150, placeholder="What happened today?")
-        
         if st.form_submit_button("💾 Save Note", type="primary"):
             if not d_content.strip():
                 st.error("Note cannot be empty.")
@@ -978,7 +1068,6 @@ elif current_tab == "📓 My Diary":
     try:
         res = supabase.table("diary_entries").select("*").eq("phone", user_phone).order("date", desc=True).execute()
         df_diary = pd.DataFrame(res.data) if res.data else pd.DataFrame()
-        
         if not df_diary.empty:
             for _, row in df_diary.iterrows():
                 formatted_date = pd.to_datetime(row['date']).strftime('%d %b %Y')
@@ -989,7 +1078,6 @@ elif current_tab == "📓 My Diary":
                         st.rerun()
         else:
             st.info("You haven't written any notes yet.")
-            
     except Exception as e:
         st.error("Error loading past entries.")
 
@@ -998,7 +1086,7 @@ elif current_tab == "📓 My Diary":
 # ==============================================================================
 
 elif current_tab == "📈 Dashboard":
-    st.subheader("📈 Financial Analytics Dashboard")
+    page_header("📈 Dashboard", "Financial analytics and workforce overview")
     st.markdown("### 📅 Select Date Range")
     date_col1, date_col2 = st.columns(2)
     with date_col1: start_date = st.date_input("Start Date", date.today() - timedelta(days=30), format="DD-MM-YYYY")
@@ -1042,7 +1130,6 @@ elif current_tab == "📈 Dashboard":
             for _, r in df_e_filtered.iterrows(): site_totals[r["site"]] = site_totals.get(r["site"], 0) + r["total_cost"]
         if not df_m_filtered.empty:
             for _, r in df_m_filtered.iterrows(): site_totals[r["site"]] = site_totals.get(r["site"], 0) + r["amount"]
-                
         if site_totals:
             df_site_cost = pd.DataFrame(list(site_totals.items()), columns=["Site", "Total Cost"])
             st.bar_chart(df_site_cost.set_index("Site"), color="#F39C12")
@@ -1056,7 +1143,7 @@ elif current_tab == "📈 Dashboard":
         else: st.info("No materials logged in this date range.")
 
 elif current_tab == "🧾 Client Invoice":
-    st.subheader("🧾 Client Invoice Generator")
+    page_header("🧾 Client Invoice", "Generate professional invoices with your billing margin")
     df_sites = fetch_data("sites")
     if df_sites.empty: st.warning("No sites available.")
     else:
@@ -1072,10 +1159,8 @@ elif current_tab == "🧾 Client Invoice":
             inv_site = c1.selectbox("Select Project Site", client_sites)
             inv_start = c2.date_input("Start Date", date.today() - timedelta(days=6), format="DD-MM-YYYY")
             inv_end = c3.date_input("End Date", date.today(), format="DD-MM-YYYY")
-            
             st.divider()
             
-            # --- AUTO FETCH LABOR & CLIENT MARGIN ---
             st.markdown("### Step 2: Labor Billing (Apply Client Margin)")
             df_entries = fetch_data("entries")
             tot_mason, tot_helper, tot_ladies = 0, 0, 0
@@ -1085,7 +1170,6 @@ elif current_tab == "🧾 Client Invoice":
                 df_entries["date_dt"] = pd.to_datetime(df_entries["date"]).dt.date
                 mask = (df_entries["site"] == inv_site) & (df_entries["date_dt"] >= inv_start) & (df_entries["date_dt"] <= inv_end)
                 df_e_filtered = df_entries[mask]
-                
                 if not df_e_filtered.empty:
                     tot_mason = df_e_filtered["count_mason"].sum()
                     tot_helper = df_e_filtered["count_helper"].sum()
@@ -1117,7 +1201,6 @@ elif current_tab == "🧾 Client Invoice":
             
             st.divider()
             
-            # --- AUTO FETCH MATERIALS ---
             st.markdown("### Step 3: Auto-Fetched Materials")
             st.caption(f"Showing materials saved to the database for **{inv_site}** between **{inv_start.strftime('%d-%m-%Y')}** and **{inv_end.strftime('%d-%m-%Y')}**.")
             
@@ -1130,7 +1213,6 @@ elif current_tab == "🧾 Client Invoice":
                 df_materials["date_dt"] = pd.to_datetime(df_materials["date"]).dt.date
                 mask_m = (df_materials["site"] == inv_site) & (df_materials["date_dt"] >= inv_start) & (df_materials["date_dt"] <= inv_end)
                 df_m_filtered = df_materials[mask_m].copy()
-                
                 if not df_m_filtered.empty:
                     df_m_filtered["formatted_date"] = pd.to_datetime(df_m_filtered["date"]).dt.strftime('%d-%m-%Y')
                     df_m_filtered["Description_PDF"] = df_m_filtered["material_name"] + " (" + df_m_filtered["category"] + ")"
@@ -1144,21 +1226,17 @@ elif current_tab == "🧾 Client Invoice":
                 
             st.metric("Total Material Cost", f"₹{total_mat:,.2f}")
             
-            # --- ⚙️ MANAGE MATERIALS PANEL ---
             st.markdown("#### ⚙️ Manage Materials")
             tab_add, tab_edit, tab_del = st.tabs(["➕ Add Material", "✏️ Edit Material", "🗑️ Delete Material"])
             
-            # 1. ADD TAB
             with tab_add:
                 with st.form("quick_add_mat_v2"):
                     c_qm1, c_qm2 = st.columns([1, 2])
                     qm_date = c_qm1.date_input("Date of Purchase", inv_end, format="DD-MM-YYYY")
                     qm_desc = c_qm2.text_input("Material Description", placeholder="e.g., Cement (50 Bags)")
-                    
                     c_qm3, c_qm4 = st.columns(2)
                     qm_cat = c_qm3.selectbox("Category Section", ["Civil", "Bill", "Transportation"])
                     qm_amt = c_qm4.number_input("Amount (₹)", min_value=0.0, step=100.0)
-                    
                     if st.form_submit_button("Save to Database", type="primary"):
                         if qm_desc:
                             load = {
@@ -1173,26 +1251,22 @@ elif current_tab == "🧾 Client Invoice":
                         else:
                             st.error("Please enter a description.")
                             
-            # 2. EDIT TAB
             with tab_edit:
                 if not df_m_filtered.empty:
                     edit_options = {f"{row['formatted_date']} - {row['material_name']} - ₹{row['amount']}": row for _, row in df_m_filtered.iterrows()}
                     sel_edit_key = st.selectbox("Select Material to Edit", list(edit_options.keys()))
                     sel_edit_row = edit_options[sel_edit_key]
-                    
                     with st.form("edit_mat_form"):
                         c_e1, c_e2 = st.columns([1, 2])
                         edit_date_obj = pd.to_datetime(sel_edit_row["date"]).date()
                         e_date = c_e1.date_input("Update Date", edit_date_obj, format="DD-MM-YYYY")
                         e_desc = c_e2.text_input("Update Description", value=sel_edit_row["material_name"])
-                        
                         c_e3, c_e4 = st.columns(2)
                         cat_options = ["Civil", "Bill", "Transportation"]
                         existing_cat = sel_edit_row.get("category", "Civil")
                         cat_idx = cat_options.index(existing_cat) if existing_cat in cat_options else 0
                         e_cat = c_e3.selectbox("Update Category", cat_options, index=cat_idx)
                         e_amt = c_e4.number_input("Update Amount (₹)", value=float(sel_edit_row["amount"]), step=100.0)
-                        
                         if st.form_submit_button("Update Material", type="primary"):
                             update_load = {
                                 "date": str(e_date),
@@ -1207,12 +1281,10 @@ elif current_tab == "🧾 Client Invoice":
                 else:
                     st.info("No materials available to edit in this date range.")
                     
-            # 3. DELETE TAB
             with tab_del:
                 if not df_m_filtered.empty:
                     del_options = {f"{row['formatted_date']} - {row['material_name']} - ₹{row['amount']}": row['id'] for _, row in df_m_filtered.iterrows()}
                     sel_del = st.selectbox("Select Material to Delete", list(del_options.keys()))
-                    
                     if st.button("🗑️ Delete Selected Material", type="primary"):
                         del_id = del_options[sel_del]
                         supabase.table("materials").delete().eq("id", int(del_id)).execute()
@@ -1223,8 +1295,6 @@ elif current_tab == "🧾 Client Invoice":
                     st.info("No materials available to delete in this date range.")
 
             st.divider()
-            
-            # --- GENERATE PDF ---
             grand_total = total_labor + total_mat
             st.markdown(f"## 💰 Grand Total: ₹{grand_total:,.2f}")
             
@@ -1239,7 +1309,7 @@ elif current_tab == "🧾 Client Invoice":
                 )
 
 elif current_tab == "🔍 Site Logs":
-    st.subheader("🔍 Site Logs")
+    page_header("🔍 Site Logs", "Browse and audit all recorded entries")
     response = supabase.table("entries").select("*").order("date", desc=True).limit(500).execute()
     df_e = pd.DataFrame(response.data)
     st.caption("Showing last 500 entries.")
@@ -1250,12 +1320,10 @@ elif current_tab == "🔍 Site Logs":
         fil_site = st.selectbox("Filter Site", ["All"] + sorted(df_e["site"].unique().tolist()))
         if fil_site != "All": 
             df_e = df_e[df_e["site"] == fil_site]
-            
         if "photo_url" in df_e.columns:
             df_e["Photo"] = df_e["photo_url"].apply(lambda x: "📸 Yes" if x else "No")
             cols = ["id", "Date", "site", "contractor", "count_mason", "count_helper", "count_ladies", "total_cost", "work_description", "Photo"]
         else: cols = ["id", "Date", "site", "contractor", "count_mason", "count_helper", "count_ladies", "total_cost", "work_description"]
-            
         st.dataframe(df_e[cols], use_container_width=True, hide_index=True)
         st.divider()
         with st.expander("🗑️ Delete Entry"):
@@ -1273,7 +1341,7 @@ elif current_tab == "🔍 Site Logs":
         st.info("No logs.")
 
 elif current_tab == "📍 Sites":
-    st.subheader("📍 Sites")
+    page_header("📍 Sites", "Manage construction sites")
     st.dataframe(fetch_data("sites"), hide_index=True, use_container_width=True)
     c1, c2 = st.columns(2)
     with c1:
@@ -1294,7 +1362,7 @@ elif current_tab == "📍 Sites":
              st.rerun()
 
 elif current_tab == "👷 Contractors":
-    st.subheader("Contractor Rates")
+    page_header("👷 Contractors", "Manage contractor rates and details")
     df_c = fetch_data("contractors")
     st.dataframe(df_c.sort_values(by=["name", "effective_date"], ascending=[True, False]), use_container_width=True, hide_index=True)
     st.divider()
@@ -1314,7 +1382,7 @@ elif current_tab == "👷 Contractors":
             st.rerun()
 
 elif current_tab == "👥 Users":
-    st.subheader("Users")
+    page_header("👥 Users", "Add, update, or deactivate team members")
     st.dataframe(fetch_data("users"), use_container_width=True)
     st.markdown("### ➕ Add / Update User")
     with st.form("u_add"):
@@ -1356,7 +1424,7 @@ elif current_tab == "👥 Users":
                     st.error("⚠️ Wrong Security Code.")
 
 elif current_tab == "📂 Archive & Recovery":
-    st.subheader("Recovery Zone")
+    page_header("📂 Archive & Recovery", "Backup, view old data, and restore if needed")
     t1, t2, t3 = st.tabs(["Reset Data", "View Archives (Offline)", "Restore Data"])
     
     with t1:
@@ -1372,7 +1440,6 @@ elif current_tab == "📂 Archive & Recovery":
             "contractors": fetch_data("contractors").to_dict("records")
         }
         st.download_button("Download Backup", data=json.dumps(bkp, default=str), file_name="full_backup.json", on_click=ul_res)
-        
         c_del1, c_del2 = st.columns(2)
         conf_txt = c_del1.text_input("Type 'DELETE ALL'")
         conf_pass = c_del2.text_input("Admin Password", type="password")
