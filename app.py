@@ -90,7 +90,7 @@ def apply_custom_styling():
         section[data-testid="stSidebar"] .stAlert { background-color: rgba(255,255,255,0.08) !important; border: none !important; }
         section[data-testid="stSidebar"] input {
             background-color: rgba(255,255,255,0.1) !important;
-            color: #FFFFFF !important;
+            color: #1A202C !important; /* CHANGED HERE: Dark text so it is visible in the search bar */
             border: 1px solid rgba(255,255,255,0.2) !important;
         }
 
@@ -1351,7 +1351,7 @@ elif current_tab == "🧾 Client Invoice":
                     tot_ladies = df_e_filtered["count_ladies"].sum()
                     internal_total_labor = df_e_filtered["total_cost"].sum()
 
-            st.info(f"💡 **Your internal labour payout** for this period: **₹{internal_total_labor:,.0f}**  |  Enter your client billing rates below to set what you'll charge the client.")
+            st.info(f"💡 **Your internal labour payout** for this period: **₹{internal_total_labor:,.0f}** |  Enter your client billing rates below to set what you'll charge the client.")
 
             c_l1, c_l2, c_l3 = st.columns(3)
             client_rate_mason = c_l1.number_input(f"Client Rate — Mason ({int(tot_mason)} shifts)", value=0.0, step=50.0, help="Rate per shift you're billing the client.")
