@@ -367,91 +367,148 @@ class ClientInvoicePDF(FPDF):
     def header(self):
         self.set_font('Arial', 'B', 22)
         self.set_text_color(44, 62, 80)
-        self.cell(0, 15, 'WEEKLY EXPENSE REPORT', 0, 1, 'C')
-        self.ln(5)
+        self.cell(0, 15, 'CLIENT EXPENSE RECOVERY INVOICE', 0, 1, 'C')
+        self.ln(3)
     def footer(self):
         self.set_y(-15)
         self.set_font('Arial', 'I', 8)
         self.set_text_color(150, 150, 150)
-        self.cell(0, 10, f'Page {self.page_no()}', 0, 0, 'C')
+        self.cell(0, 10, f'Page {self.page_no()} — Confidential', 0, 0, 'C')
 
-def generate_client_invoice_bytes(site_name, date_range_label, labor_details, df_mats, grand_total):
+def _pdf_section_header(pdf, number, title, r, g, b):
+    pdf.set_font("Arial", 'B', 13)
+    pdf.set_fill_color(r, g, b)
+    pdf.set_text_color(255, 255, 255)
+    pdf.cell(0, 10, f"  {number}. {title}", 0, 1, 'L', fill=True)
+    pdf.set_text_color(0, 0, 0)
+
+def _pdf_col_header(pdf, widths, labels):
+    pdf.set_font("Arial", 'B', 10)
+    pdf.set_fill_color(236, 240, 241)
+    for w, lbl in zip(widths, labels):
+        pdf.cell(w, 9, lbl, 1, 0, 'C', fill=True)
+    pdf.ln()
+
+def _pdf_subtotal_row(pdf, label, amount):
+    pdf.set_font("Arial", 'B', 10)
+    pdf.set_fill_color(236, 240, 241)
+    pdf.cell(140, 9, f"  {label}", 1, 0, 'R', fill=True)
+    pdf.cell(50, 9, f"Rs. {amount:,.2f}", 1, 1, 'R', fill=True)
+
+def generate_client_invoice_bytes(site_name, date_range_label, labor_details, df_client_mats, df_our_mats, grand_total):
+    """
+    Generates a client-facing PDF invoice.
+    - labor_details: civil/pre-work labour charged to client
+    - df_client_mats: materials procured in our name but FOR the client (to be recovered)
+    - df_our_mats: reference list of our-scope materials (shown as 'Included in Quote' — no charge)
+    - grand_total: labour_total + client_mat_total only
+    """
     pdf = ClientInvoicePDF()
     pdf.add_page()
-    pdf.set_font("Arial", 'B', 12)
+
+    # Meta info
+    pdf.set_font("Arial", 'B', 11)
     pdf.set_text_color(44, 62, 80)
-    pdf.cell(100, 8, f"Project Site: {site_name}", 0, 0, 'L')
-    pdf.set_font("Arial", '', 11)
-    pdf.cell(90, 8, f"Date Generated: {date.today().strftime('%d %b %Y')}", 0, 1, 'R')
-    pdf.cell(100, 8, f"Billing Period: {date_range_label}", 0, 1, 'L')
-    pdf.ln(10)
-    pdf.set_font("Arial", 'B', 14)
-    pdf.set_fill_color(52, 73, 94)
-    pdf.set_text_color(255, 255, 255)
-    pdf.cell(0, 10, " 1. LABOR EXPENSES", 0, 1, 'L', fill=True)
+    pdf.cell(100, 7, f"Project Site: {site_name}", 0, 0, 'L')
+    pdf.set_font("Arial", '', 10)
+    pdf.cell(90, 7, f"Date Generated: {date.today().strftime('%d %b %Y')}", 0, 1, 'R')
+    pdf.set_font("Arial", '', 10)
+    pdf.cell(100, 7, f"Billing Period: {date_range_label}", 0, 1, 'L')
+    pdf.ln(6)
+
+    # ── SECTION 1: CIVIL / PRE-WORK LABOUR ──────────────────────────────────
+    _pdf_section_header(pdf, 1, "CIVIL & PRE-WORK LABOUR (Charged to Client)", 44, 62, 80)
+    pdf.set_font("Arial", 'I', 9)
+    pdf.set_text_color(100, 100, 100)
+    pdf.cell(0, 6, "  Labour for civil/wall changes done before interior works — not covered in your quote.", 0, 1, 'L')
     pdf.set_text_color(0, 0, 0)
-    pdf.set_font("Arial", 'B', 11)
-    pdf.set_fill_color(236, 240, 241)
-    pdf.cell(50, 10, "Labor Type", 1, 0, 'C', fill=True)
-    pdf.cell(45, 10, "Total Shifts", 1, 0, 'C', fill=True)
-    pdf.cell(45, 10, "Rate (Rs)", 1, 0, 'C', fill=True)
-    pdf.cell(50, 10, "Amount (Rs)", 1, 1, 'C', fill=True)
-    pdf.set_font("Arial", '', 11)
+    pdf.ln(2)
+    _pdf_col_header(pdf, [55, 40, 45, 50], ["Labour Type", "Shifts", "Rate (Rs/shift)", "Amount (Rs)"])
+    pdf.set_font("Arial", '', 10)
     if labor_details['m_count'] > 0:
-        pdf.cell(50, 10, " Masons", 1, 0, 'L')
-        pdf.cell(45, 10, f"{labor_details['m_count']}", 1, 0, 'C')
-        pdf.cell(45, 10, f"{labor_details['m_rate']:,.2f}", 1, 0, 'C')
-        pdf.cell(50, 10, f"{(labor_details['m_count'] * labor_details['m_rate']):,.2f}", 1, 1, 'R')
+        pdf.cell(55, 9, "  Masons", 1, 0, 'L')
+        pdf.cell(40, 9, f"{labor_details['m_count']:.1f}", 1, 0, 'C')
+        pdf.cell(45, 9, f"{labor_details['m_rate']:,.2f}", 1, 0, 'C')
+        pdf.cell(50, 9, f"{(labor_details['m_count'] * labor_details['m_rate']):,.2f}", 1, 1, 'R')
     if labor_details['h_count'] > 0:
-        pdf.cell(50, 10, " Helpers", 1, 0, 'L')
-        pdf.cell(45, 10, f"{labor_details['h_count']}", 1, 0, 'C')
-        pdf.cell(45, 10, f"{labor_details['h_rate']:,.2f}", 1, 0, 'C')
-        pdf.cell(50, 10, f"{(labor_details['h_count'] * labor_details['h_rate']):,.2f}", 1, 1, 'R')
+        pdf.cell(55, 9, "  Helpers", 1, 0, 'L')
+        pdf.cell(40, 9, f"{labor_details['h_count']:.1f}", 1, 0, 'C')
+        pdf.cell(45, 9, f"{labor_details['h_rate']:,.2f}", 1, 0, 'C')
+        pdf.cell(50, 9, f"{(labor_details['h_count'] * labor_details['h_rate']):,.2f}", 1, 1, 'R')
     if labor_details['l_count'] > 0:
-        pdf.cell(50, 10, " Ladies", 1, 0, 'L')
-        pdf.cell(45, 10, f"{labor_details['l_count']}", 1, 0, 'C')
-        pdf.cell(45, 10, f"{labor_details['l_rate']:,.2f}", 1, 0, 'C')
-        pdf.cell(50, 10, f"{(labor_details['l_count'] * labor_details['l_rate']):,.2f}", 1, 1, 'R')
+        pdf.cell(55, 9, "  Ladies", 1, 0, 'L')
+        pdf.cell(40, 9, f"{labor_details['l_count']:.1f}", 1, 0, 'C')
+        pdf.cell(45, 9, f"{labor_details['l_rate']:,.2f}", 1, 0, 'C')
+        pdf.cell(50, 9, f"{(labor_details['l_count'] * labor_details['l_rate']):,.2f}", 1, 1, 'R')
     if labor_details['m_count'] == 0 and labor_details['h_count'] == 0 and labor_details['l_count'] == 0:
-        pdf.cell(190, 10, "No labor entered for this period.", 1, 1, 'C')
-    pdf.set_font("Arial", 'B', 11)
-    pdf.cell(140, 10, "Total Labor Cost:", 1, 0, 'R', fill=True)
-    pdf.cell(50, 10, f"Rs. {labor_details['total']:,.2f}", 1, 1, 'R', fill=True)
-    pdf.ln(10)
-    pdf.set_font("Arial", 'B', 14)
-    pdf.set_fill_color(52, 73, 94)
-    pdf.set_text_color(255, 255, 255)
-    pdf.cell(0, 10, " 2. MATERIAL EXPENSES", 0, 1, 'L', fill=True)
-    pdf.set_font("Arial", 'B', 11)
+        pdf.cell(190, 9, "  No civil labour charged for this period.", 1, 1, 'C')
+    _pdf_subtotal_row(pdf, "Sub-Total — Labour:", labor_details['total'])
+    pdf.ln(8)
+
+    # ── SECTION 2: CLIENT-PROCURED MATERIALS (to recover) ───────────────────
+    _pdf_section_header(pdf, 2, "MATERIALS PROCURED ON CLIENT'S BEHALF (To Recover)", 41, 128, 185)
+    pdf.set_font("Arial", 'I', 9)
+    pdf.set_text_color(100, 100, 100)
+    pdf.cell(0, 6, "  Items purchased/billed in our name at client's request — amounts paid from our account, to be recovered.", 0, 1, 'L')
     pdf.set_text_color(0, 0, 0)
-    pdf.set_fill_color(236, 240, 241)
-    pdf.cell(30, 10, "Date", 1, 0, 'C', fill=True)
-    pdf.cell(110, 10, "Material Description", 1, 0, 'C', fill=True)
-    pdf.cell(50, 10, "Amount", 1, 1, 'C', fill=True)
-    pdf.set_font("Arial", '', 11)
-    mat_total = 0
-    if not df_mats.empty:
-        for _, r in df_mats.iterrows():
+    pdf.ln(2)
+    _pdf_col_header(pdf, [28, 112, 50], ["Date", "Description / Vendor", "Amount (Rs)"])
+    pdf.set_font("Arial", '', 10)
+    client_mat_total = 0
+    if not df_client_mats.empty:
+        for _, r in df_client_mats.iterrows():
             desc = str(r.get("Description", "")).strip()
-            if not desc: continue
-            m_date = str(r.get("Date", "")).strip()
-            try: amt = float(r.get("Amount (Rs)", 0))
-            except: amt = 0.0
-            mat_total += amt
-            pdf.cell(30, 10, f"{m_date[:12]}", 1, 0, 'C')
-            pdf.cell(110, 10, f" {desc[:55]}", 1, 0, 'L')
-            pdf.cell(50, 10, f"{amt:,.2f}", 1, 1, 'R')
+            vendor = str(r.get("Vendor", "")).strip()
+            full_desc = f"{desc} [{vendor}]" if vendor and vendor.lower() not in ["", "client invoice", "-"] else desc
+            if not desc:
+                continue
+            m_date = str(r.get("Date", "")).strip()[:12]
+            try:
+                amt = float(r.get("Amount (Rs)", 0))
+            except:
+                amt = 0.0
+            client_mat_total += amt
+            pdf.cell(28, 9, m_date, 1, 0, 'C')
+            pdf.cell(112, 9, f" {full_desc[:60]}", 1, 0, 'L')
+            pdf.cell(50, 9, f"{amt:,.2f}", 1, 1, 'R')
     else:
-        pdf.cell(190, 10, "No materials entered for this period.", 1, 1, 'C')
-    pdf.set_font("Arial", 'B', 11)
-    pdf.cell(140, 10, "Total Material Cost:", 1, 0, 'R', fill=True)
-    pdf.cell(50, 10, f"Rs. {mat_total:,.2f}", 1, 1, 'R', fill=True)
-    pdf.ln(15)
-    pdf.set_font("Arial", 'B', 16)
+        pdf.cell(190, 9, "  No client-procured materials for this period.", 1, 1, 'C')
+    _pdf_subtotal_row(pdf, "Sub-Total — Client Materials:", client_mat_total)
+    pdf.ln(8)
+
+    # ── SECTION 3: OUR SCOPE MATERIALS (Included in Quote — not charged) ────
+    _pdf_section_header(pdf, 3, "OUR SCOPE MATERIALS (Included in Quote — No Additional Charge)", 39, 174, 96)
+    pdf.set_font("Arial", 'I', 9)
+    pdf.set_text_color(100, 100, 100)
+    pdf.cell(0, 6, "  These materials are covered under the agreed project quote and are NOT billed separately.", 0, 1, 'L')
+    pdf.set_text_color(0, 0, 0)
+    pdf.ln(2)
+    _pdf_col_header(pdf, [28, 112, 50], ["Date", "Description", "Status"])
+    pdf.set_font("Arial", '', 10)
+    if not df_our_mats.empty:
+        for _, r in df_our_mats.iterrows():
+            desc = str(r.get("Description", "")).strip()
+            if not desc:
+                continue
+            m_date = str(r.get("Date", "")).strip()[:12]
+            pdf.cell(28, 9, m_date, 1, 0, 'C')
+            pdf.cell(112, 9, f" {desc[:60]}", 1, 0, 'L')
+            pdf.cell(50, 9, "Included in Quote", 1, 1, 'C')
+    else:
+        pdf.cell(190, 9, "  No our-scope materials listed for this period.", 1, 1, 'C')
+    pdf.ln(8)
+
+    # ── GRAND TOTAL ──────────────────────────────────────────────────────────
+    pdf.set_font("Arial", 'B', 14)
     pdf.set_fill_color(46, 204, 113)
     pdf.set_text_color(255, 255, 255)
-    pdf.cell(140, 15, " GRAND TOTAL DUE:", 1, 0, 'R', fill=True)
-    pdf.cell(50, 15, f"Rs. {grand_total:,.2f}", 1, 1, 'R', fill=True)
+    pdf.cell(140, 14, "  TOTAL AMOUNT TO RECOVER FROM CLIENT:", 1, 0, 'R', fill=True)
+    pdf.cell(50, 14, f"Rs. {grand_total:,.2f}", 1, 1, 'R', fill=True)
+    pdf.set_text_color(0, 0, 0)
+    pdf.set_font("Arial", 'I', 9)
+    pdf.ln(4)
+    pdf.cell(0, 6, f"  = Labour (Rs. {labor_details['total']:,.2f}) + Client Materials (Rs. {client_mat_total:,.2f})", 0, 1, 'L')
+
     return pdf.output(dest='S').encode('latin-1')
 
 # --- WEEKLY BILL RENDERER ---
@@ -1313,7 +1370,8 @@ elif current_tab == "📈 Dashboard":
             empty_state("🧱", "No materials logged", "No material entries found in this date range.")
 
 elif current_tab == "🧾 Client Invoice":
-    page_header("🧾 Client Invoice", "Generate a professional expense report to send to your client")
+    page_header("🧾 Client Invoice", "Bill your client for civil pre-work labour + materials procured on their behalf")
+
     df_sites = fetch_data("sites")
     if df_sites.empty:
         empty_state("🏗️", "No sites available", "Add sites first before generating invoices.")
@@ -1325,159 +1383,299 @@ elif current_tab == "🧾 Client Invoice":
             st.error("⚠️ Database Setup Required: The 'is_client_site' column is missing from your 'sites' table in Supabase. Please add it as a boolean column.")
 
         if not client_sites:
-            st.info("💡 No sites are marked for client billing. To fix this, go to **Supabase → Table Editor → sites** and tick the **is_client_site** checkbox for the sites you want to invoice.")
+            st.info("💡 No sites are marked for client billing. Go to **Supabase → Table Editor → sites** and tick **is_client_site** for the relevant sites.")
         else:
+            # ── STEP 1: Site & Date Range ──────────────────────────────────────────
             st.markdown("### Step 1 — Select Site & Date Range")
             c1, c2, c3 = st.columns(3)
-            inv_site = c1.selectbox("🏗️ Project Site", client_sites, help="Only sites marked for client billing appear here.")
+            inv_site  = c1.selectbox("🏗️ Project Site", client_sites, help="Only sites marked for client billing appear here.")
             inv_start = c2.date_input("📅 From", date.today() - timedelta(days=6), format="DD-MM-YYYY")
-            inv_end = c3.date_input("📅 To", date.today(), format="DD-MM-YYYY")
+            inv_end   = c3.date_input("📅 To",   date.today(),                      format="DD-MM-YYYY")
 
             st.divider()
 
-            st.markdown("### Step 2 — Labour Billing")
-            st.caption("Your actual (internal) labour cost is shown below. Enter the rates you want to charge your client to apply a margin.")
+            # ── STEP 2: Civil / Pre-work Labour ────────────────────────────────────
+            st.markdown("### Step 2 — Civil & Pre-Work Labour")
+            st.caption(
+                "Enter the labour that was done **before** interior work began (e.g. wall demolition, "
+                "civil changes) — this is NOT covered in your interior quote and must be recovered from the client. "
+                "Enter the number of shifts logged for this site in the selected period, and the rate you want to charge."
+            )
+
+            # Pull logged shifts for reference
             df_entries = fetch_data("entries")
-            tot_mason, tot_helper, tot_ladies = 0, 0, 0
+            tot_mason = tot_helper = tot_ladies = 0
             internal_total_labor = 0
 
             if not df_entries.empty:
                 df_entries["date_dt"] = pd.to_datetime(df_entries["date"]).dt.date
-                mask = (df_entries["site"] == inv_site) & (df_entries["date_dt"] >= inv_start) & (df_entries["date_dt"] <= inv_end)
-                df_e_filtered = df_entries[mask]
+                mask_e = (df_entries["site"] == inv_site) & \
+                         (df_entries["date_dt"] >= inv_start) & \
+                         (df_entries["date_dt"] <= inv_end)
+                df_e_filtered = df_entries[mask_e]
                 if not df_e_filtered.empty:
-                    tot_mason = df_e_filtered["count_mason"].sum()
-                    tot_helper = df_e_filtered["count_helper"].sum()
-                    tot_ladies = df_e_filtered["count_ladies"].sum()
+                    tot_mason         = df_e_filtered["count_mason"].sum()
+                    tot_helper        = df_e_filtered["count_helper"].sum()
+                    tot_ladies        = df_e_filtered["count_ladies"].sum()
                     internal_total_labor = df_e_filtered["total_cost"].sum()
 
-            st.info(f"💡 **Your internal labour payout** for this period: **₹{internal_total_labor:,.0f}** |  Enter your client billing rates below to set what you'll charge the client.")
+            st.info(
+                f"📊 Logged shifts this period — Masons: **{int(tot_mason)}**, "
+                f"Helpers: **{int(tot_helper)}**, Ladies: **{int(tot_ladies)}** "
+                f"| Internal payout: **₹{internal_total_labor:,.0f}**"
+            )
 
             c_l1, c_l2, c_l3 = st.columns(3)
-            client_rate_mason = c_l1.number_input(f"Client Rate — Mason ({int(tot_mason)} shifts)", value=0.0, step=50.0, help="Rate per shift you're billing the client.")
-            client_rate_helper = c_l2.number_input(f"Client Rate — Helper ({int(tot_helper)} shifts)", value=0.0, step=50.0)
-            client_rate_ladies = c_l3.number_input(f"Client Rate — Ladies ({int(tot_ladies)} shifts)", value=0.0, step=50.0)
+            client_mason_shifts  = c_l1.number_input(f"Mason Shifts to Bill",  min_value=0.0, value=float(tot_mason),  step=0.5, help="You can adjust this — bill only the civil pre-work shifts, not interior shifts.")
+            client_helper_shifts = c_l2.number_input(f"Helper Shifts to Bill", min_value=0.0, value=float(tot_helper), step=0.5)
+            client_ladies_shifts = c_l3.number_input(f"Ladies Shifts to Bill", min_value=0.0, value=float(tot_ladies), step=0.5)
 
-            total_labor = (tot_mason * client_rate_mason) + (tot_helper * client_rate_helper) + (tot_ladies * client_rate_ladies)
-            margin = total_labor - internal_total_labor
-            st.metric(f"Total Billed Labour — {inv_site}", f"₹{total_labor:,.2f}",
-                      delta=f"₹{margin:,.0f} margin" if total_labor > 0 else None,
-                      help="This is what you will bill the client for labour.")
+            c_r1, c_r2, c_r3 = st.columns(3)
+            client_rate_mason  = c_r1.number_input(f"Rate/shift — Mason (₹)",  min_value=0.0, value=0.0, step=50.0)
+            client_rate_helper = c_r2.number_input(f"Rate/shift — Helper (₹)", min_value=0.0, value=0.0, step=50.0)
+            client_rate_ladies = c_r3.number_input(f"Rate/shift — Ladies (₹)", min_value=0.0, value=0.0, step=50.0)
+
+            total_labor = (client_mason_shifts  * client_rate_mason) + \
+                          (client_helper_shifts * client_rate_helper) + \
+                          (client_ladies_shifts * client_rate_ladies)
+
+            st.metric("Total Labour to Recover from Client", f"₹{total_labor:,.2f}",
+                      help="This covers civil/pre-work labour only — interior labour is in your project quote.")
 
             labor_details = {
-                'm_count': tot_mason, 'm_rate': client_rate_mason,
-                'h_count': tot_helper, 'h_rate': client_rate_helper,
-                'l_count': tot_ladies, 'l_rate': client_rate_ladies,
+                'm_count': client_mason_shifts,  'm_rate': client_rate_mason,
+                'h_count': client_helper_shifts, 'h_rate': client_rate_helper,
+                'l_count': client_ladies_shifts, 'l_rate': client_rate_ladies,
                 'total': total_labor
             }
 
             st.divider()
-            st.markdown("### Step 3 — Materials")
-            st.caption(f"Showing materials from the database for **{inv_site}** between **{inv_start.strftime('%d %b %Y')}** and **{inv_end.strftime('%d %b %Y')}**.")
 
+            # ── STEP 3: Materials — two buckets ────────────────────────────────────
+            st.markdown("### Step 3 — Materials")
+            st.markdown("""
+            <div style='background:#EEF9FF; border-left:4px solid #2980B9; border-radius:8px; padding:0.8rem 1.2rem; margin-bottom:1rem;'>
+            <b>How this works:</b><br>
+            Use <b>🔴 Client-Procured</b> for materials the client purchased but billed to your name (e.g. A/C unit, tiles) — 
+            you paid the vendor from your account and need to recover this amount from the client.<br><br>
+            Use <b>🟢 Our Scope</b> for materials that are already included in your project quote — 
+            these appear in the PDF as "Included in Quote" with <b>no charge</b>.
+            </div>
+            """, unsafe_allow_html=True)
+
+            # Fetch all materials for this site & period
             df_materials = fetch_data("materials")
-            pdf_mats = pd.DataFrame(columns=["Date", "Description", "Amount (Rs)"])
-            total_mat = 0
             df_m_filtered = pd.DataFrame()
 
             if not df_materials.empty:
                 df_materials["date_dt"] = pd.to_datetime(df_materials["date"]).dt.date
-                mask_m = (df_materials["site"] == inv_site) & (df_materials["date_dt"] >= inv_start) & (df_materials["date_dt"] <= inv_end)
+                mask_m = (df_materials["site"] == inv_site) & \
+                         (df_materials["date_dt"] >= inv_start) & \
+                         (df_materials["date_dt"] <= inv_end)
                 df_m_filtered = df_materials[mask_m].copy()
                 if not df_m_filtered.empty:
                     df_m_filtered["formatted_date"] = pd.to_datetime(df_m_filtered["date"]).dt.strftime('%d-%m-%Y')
-                    df_m_filtered["Description_PDF"] = df_m_filtered["material_name"] + " (" + df_m_filtered["category"] + ")"
-                    pdf_mats = df_m_filtered[["formatted_date", "Description_PDF", "amount"]].rename(
-                        columns={"formatted_date": "Date", "Description_PDF": "Description", "amount": "Amount (Rs)"})
-                    total_mat = pdf_mats["Amount (Rs)"].sum()
 
-            if not pdf_mats.empty:
-                st.dataframe(pdf_mats, use_container_width=True, hide_index=True)
+            # Split by invoice_scope column (if it exists), otherwise default all to client
+            CLIENT_SCOPE = "Client-Procured"
+            OUR_SCOPE    = "Our Scope"
+
+            has_scope_col = not df_m_filtered.empty and "invoice_scope" in df_m_filtered.columns
+
+            if has_scope_col:
+                df_client_scope = df_m_filtered[df_m_filtered["invoice_scope"] == CLIENT_SCOPE].copy()
+                df_our_scope    = df_m_filtered[df_m_filtered["invoice_scope"] == OUR_SCOPE].copy()
             else:
-                st.info("ℹ️ No materials found in the database for this date range. You can add them below.")
+                # If no scope column yet, treat everything as client-procured by default
+                df_client_scope = df_m_filtered.copy()
+                df_our_scope    = pd.DataFrame()
 
-            st.metric("Total Material Cost", f"₹{total_mat:,.2f}")
+            # ── 3a: Client-Procured Materials ────────────────────────────────────
+            mat_tab_client, mat_tab_ours = st.tabs(["🔴 Client-Procured Materials (To Recover)", "🟢 Our Scope Materials (Included in Quote)"])
 
-            st.markdown("#### ⚙️ Manage Materials for This Invoice")
-            st.caption("Use these tabs to add, edit, or remove materials before generating the PDF.")
-            tab_add, tab_edit, tab_del = st.tabs(["➕ Add Material", "✏️ Edit Material", "🗑️ Delete Material"])
+            with mat_tab_client:
+                st.caption("Items purchased/billed in your name at the client's request — you paid, now recover.")
 
-            with tab_add:
-                with st.form("quick_add_mat_v2"):
-                    c_qm1, c_qm2 = st.columns([1, 2])
-                    qm_date = c_qm1.date_input("Date of Purchase", inv_end, format="DD-MM-YYYY")
-                    qm_desc = c_qm2.text_input("Material Description", placeholder="e.g. Cement (50 Bags)")
-                    c_qm3, c_qm4 = st.columns(2)
-                    qm_cat = c_qm3.selectbox("Category", ["Civil", "Bill", "Transportation"])
-                    qm_amt = c_qm4.number_input("Amount (₹)", min_value=0.0, step=100.0)
-                    if st.form_submit_button("💾 Save to Database", type="primary"):
-                        if qm_desc.strip():
+                if not df_client_scope.empty:
+                    df_show_c = df_client_scope[["formatted_date", "vendor", "material_name", "amount"]].rename(
+                        columns={"formatted_date": "Date", "vendor": "Vendor", "material_name": "Description", "amount": "Amount (₹)"}
+                    )
+                    st.dataframe(df_show_c, use_container_width=True, hide_index=True)
+                    total_client_mat = df_client_scope["amount"].sum()
+                    st.metric("Total to Recover — Client Materials", f"₹{total_client_mat:,.2f}")
+                else:
+                    st.info("ℹ️ No client-procured materials logged for this period. Add them below.")
+                    total_client_mat = 0
+
+                st.markdown("#### ➕ Add Client-Procured Material")
+                with st.form("add_client_mat"):
+                    cc1, cc2 = st.columns([1, 2])
+                    cm_date   = cc1.date_input("Date", inv_end, format="DD-MM-YYYY")
+                    cm_vendor = cc2.text_input("Vendor / Supplier Name", placeholder="e.g. Samsung, XYZ Tiles")
+                    cc3, cc4 = st.columns([3, 1])
+                    cm_desc   = cc3.text_input("Description", placeholder="e.g. Split A/C 1.5 Ton (billed to our name)")
+                    cm_amt    = cc4.number_input("Amount (₹)", min_value=0.0, step=100.0)
+                    if st.form_submit_button("💾 Save Client Material", type="primary"):
+                        if cm_desc.strip() and cm_vendor.strip():
+                            scope_val = CLIENT_SCOPE if has_scope_col else None
                             load = {
-                                "date": str(qm_date), "site": inv_site, "category": qm_cat,
-                                "vendor": "Client Invoice", "material_name": qm_desc.strip(),
-                                "quantity": 1, "amount": qm_amt, "receipt_url": ""
+                                "date": str(cm_date), "site": inv_site, "category": "Bill",
+                                "vendor": cm_vendor.strip(), "material_name": cm_desc.strip(),
+                                "quantity": 1, "amount": cm_amt, "receipt_url": ""
                             }
+                            if has_scope_col:
+                                load["invoice_scope"] = CLIENT_SCOPE
                             supabase.table("materials").insert(load).execute()
-                            st.success("✅ Saved! The invoice totals will update automatically.")
+                            st.success("✅ Client material saved!")
+                            time.sleep(1)
+                            st.rerun()
+                        else:
+                            st.error("⚠️ Please enter both a vendor name and a description.")
+
+                # Edit / Delete for client-scope materials
+                if not df_client_scope.empty:
+                    with st.expander("✏️ Edit or Delete a Client-Procured Entry"):
+                        edit_opts_c = {
+                            f"{row['formatted_date']} — {row['material_name']} — ₹{row['amount']}": row
+                            for _, row in df_client_scope.iterrows()
+                        }
+                        sel_c = st.selectbox("Select entry", list(edit_opts_c.keys()), key="sel_edit_c")
+                        row_c = edit_opts_c[sel_c]
+                        with st.form("edit_client_mat"):
+                            ec1, ec2 = st.columns([1, 2])
+                            ec_date   = ec1.date_input("Date", pd.to_datetime(row_c["date"]).date(), format="DD-MM-YYYY")
+                            ec_vendor = ec2.text_input("Vendor", value=str(row_c.get("vendor", "")))
+                            ec3, ec4  = st.columns([3, 1])
+                            ec_desc   = ec3.text_input("Description", value=str(row_c["material_name"]))
+                            ec_amt    = ec4.number_input("Amount (₹)", value=float(row_c["amount"]), step=100.0)
+                            col_upd, col_del = st.columns(2)
+                            if col_upd.form_submit_button("✅ Update"):
+                                upd = {"date": str(ec_date), "vendor": ec_vendor, "material_name": ec_desc, "amount": ec_amt}
+                                supabase.table("materials").update(upd).eq("id", int(row_c["id"])).execute()
+                                st.success("✅ Updated!")
+                                time.sleep(1)
+                                st.rerun()
+                            if col_del.form_submit_button("🗑️ Delete"):
+                                supabase.table("materials").delete().eq("id", int(row_c["id"])).execute()
+                                st.success("✅ Deleted.")
+                                time.sleep(1)
+                                st.rerun()
+
+            with mat_tab_ours:
+                st.caption("Materials covered by your project quote — they appear in the PDF as 'Included in Quote' with no additional charge to the client.")
+
+                if not df_our_scope.empty:
+                    df_show_o = df_our_scope[["formatted_date", "material_name", "amount"]].rename(
+                        columns={"formatted_date": "Date", "material_name": "Description", "amount": "Our Cost (₹)"}
+                    )
+                    df_show_o["Status"] = "✅ Included in Quote"
+                    st.dataframe(df_show_o, use_container_width=True, hide_index=True)
+                    st.caption(f"Our-scope total (internal reference only): ₹{df_our_scope['amount'].sum():,.2f} — not billed to client.")
+                else:
+                    st.info("ℹ️ No our-scope materials logged for this period. Add them below to document what is covered in your quote.")
+
+                st.markdown("#### ➕ Add Our-Scope Material")
+                with st.form("add_our_mat"):
+                    oc1, oc2 = st.columns([1, 2])
+                    om_date  = oc1.date_input("Date", inv_end, format="DD-MM-YYYY", key="om_date")
+                    om_desc  = oc2.text_input("Material Description", placeholder="e.g. Paint (included in quote)")
+                    oc3, oc4 = st.columns(2)
+                    om_cat   = oc3.selectbox("Category", ["Civil Material", "Steel Material", "Soil Material", "RMC", "Other"], key="om_cat")
+                    om_amt   = oc4.number_input("Our Cost (₹)", min_value=0.0, step=100.0, key="om_amt",
+                                                help="Your internal cost — this is NOT charged to the client.")
+                    if st.form_submit_button("💾 Save Our-Scope Material", type="primary"):
+                        if om_desc.strip():
+                            load = {
+                                "date": str(om_date), "site": inv_site, "category": om_cat,
+                                "vendor": "Our Scope", "material_name": om_desc.strip(),
+                                "quantity": 1, "amount": om_amt, "receipt_url": ""
+                            }
+                            if has_scope_col:
+                                load["invoice_scope"] = OUR_SCOPE
+                            supabase.table("materials").insert(load).execute()
+                            st.success("✅ Our-scope material saved!")
                             time.sleep(1)
                             st.rerun()
                         else:
                             st.error("⚠️ Please enter a material description.")
 
-            with tab_edit:
-                if not df_m_filtered.empty:
-                    edit_options = {f"{row['formatted_date']} — {row['material_name']} — ₹{row['amount']}": row for _, row in df_m_filtered.iterrows()}
-                    sel_edit_key = st.selectbox("Select entry to edit", list(edit_options.keys()))
-                    sel_edit_row = edit_options[sel_edit_key]
-                    with st.form("edit_mat_form"):
-                        c_e1, c_e2 = st.columns([1, 2])
-                        edit_date_obj = pd.to_datetime(sel_edit_row["date"]).date()
-                        e_date = c_e1.date_input("Date", edit_date_obj, format="DD-MM-YYYY")
-                        e_desc = c_e2.text_input("Description", value=sel_edit_row["material_name"])
-                        c_e3, c_e4 = st.columns(2)
-                        cat_options = ["Civil", "Bill", "Transportation"]
-                        existing_cat = sel_edit_row.get("category", "Civil")
-                        cat_idx = cat_options.index(existing_cat) if existing_cat in cat_options else 0
-                        e_cat = c_e3.selectbox("Category", cat_options, index=cat_idx)
-                        e_amt = c_e4.number_input("Amount (₹)", value=float(sel_edit_row["amount"]), step=100.0)
-                        if st.form_submit_button("✅ Update Material", type="primary"):
-                            supabase.table("materials").update({
-                                "date": str(e_date), "material_name": e_desc, "category": e_cat, "amount": e_amt
-                            }).eq("id", int(sel_edit_row["id"])).execute()
-                            st.success("✅ Material updated!")
-                            time.sleep(1)
-                            st.rerun()
-                else:
-                    st.info("ℹ️ No materials to edit in this date range. Add some using the ➕ tab.")
+                if not df_our_scope.empty:
+                    with st.expander("✏️ Edit or Delete an Our-Scope Entry"):
+                        edit_opts_o = {
+                            f"{row['formatted_date']} — {row['material_name']} — ₹{row['amount']}": row
+                            for _, row in df_our_scope.iterrows()
+                        }
+                        sel_o = st.selectbox("Select entry", list(edit_opts_o.keys()), key="sel_edit_o")
+                        row_o = edit_opts_o[sel_o]
+                        with st.form("edit_our_mat"):
+                            eo1, eo2 = st.columns([1, 2])
+                            eo_date  = eo1.date_input("Date", pd.to_datetime(row_o["date"]).date(), format="DD-MM-YYYY")
+                            eo_desc  = eo2.text_input("Description", value=str(row_o["material_name"]))
+                            eo_amt   = st.number_input("Our Cost (₹)", value=float(row_o["amount"]), step=100.0)
+                            eoc1, eoc2 = st.columns(2)
+                            if eoc1.form_submit_button("✅ Update"):
+                                supabase.table("materials").update({
+                                    "date": str(eo_date), "material_name": eo_desc, "amount": eo_amt
+                                }).eq("id", int(row_o["id"])).execute()
+                                st.success("✅ Updated!")
+                                time.sleep(1)
+                                st.rerun()
+                            if eoc2.form_submit_button("🗑️ Delete"):
+                                supabase.table("materials").delete().eq("id", int(row_o["id"])).execute()
+                                st.success("✅ Deleted.")
+                                time.sleep(1)
+                                st.rerun()
 
-            with tab_del:
-                if not df_m_filtered.empty:
-                    del_options = {f"{row['formatted_date']} — {row['material_name']} — ₹{row['amount']}": row['id'] for _, row in df_m_filtered.iterrows()}
-                    sel_del = st.selectbox("Select entry to delete", list(del_options.keys()))
-                    st.caption("⚠️ Deletion is immediate and cannot be undone.")
-                    if st.button("🗑️ Delete Selected Entry", type="primary"):
-                        del_id = del_options[sel_del]
-                        supabase.table("materials").delete().eq("id", int(del_id)).execute()
-                        st.success("✅ Entry deleted.")
-                        time.sleep(1)
-                        st.rerun()
-                else:
-                    st.info("ℹ️ No materials to delete in this date range.")
+            # ── Scope column hint ─────────────────────────────────────────────────
+            if not has_scope_col and not df_m_filtered.empty:
+                st.warning(
+                    "⚠️ **Tip:** Your `materials` table doesn't have an `invoice_scope` column yet. "
+                    "All existing materials are treated as Client-Procured for now. "
+                    "Add a text column named `invoice_scope` to Supabase to separate them properly going forward."
+                )
 
             st.divider()
-            grand_total = total_labor + total_mat
-            st.markdown(f"## 💰 Grand Total to Bill Client: ₹{grand_total:,.2f}")
-            st.caption("This is the sum of billed labour + all materials in the selected period.")
 
-            if st.button("📄 Generate Professional Invoice PDF", type="primary", use_container_width=True):
+            # ── STEP 4: Summary & PDF ──────────────────────────────────────────────
+            st.markdown("### Step 4 — Invoice Summary & PDF")
+
+            # Build PDF DataFrames
+            pdf_client_mats = pd.DataFrame(columns=["Date", "Vendor", "Description", "Amount (Rs)"])
+            pdf_our_mats    = pd.DataFrame(columns=["Date", "Description"])
+
+            if not df_client_scope.empty:
+                pdf_client_mats = df_client_scope[["formatted_date", "vendor", "material_name", "amount"]].rename(
+                    columns={"formatted_date": "Date", "vendor": "Vendor",
+                             "material_name": "Description", "amount": "Amount (Rs)"}
+                )
+            if not df_our_scope.empty:
+                pdf_our_mats = df_our_scope[["formatted_date", "material_name"]].rename(
+                    columns={"formatted_date": "Date", "material_name": "Description"}
+                )
+
+            total_client_mat = df_client_scope["amount"].sum() if not df_client_scope.empty else 0.0
+            grand_total = total_labor + total_client_mat
+
+            # Summary box
+            col_s1, col_s2, col_s3 = st.columns(3)
+            col_s1.metric("Civil Labour (to recover)", f"₹{total_labor:,.2f}")
+            col_s2.metric("Client Materials (to recover)", f"₹{total_client_mat:,.2f}")
+            col_s3.metric("💰 Grand Total to Recover", f"₹{grand_total:,.2f}")
+
+            st.caption("Grand Total = Civil/Pre-work Labour + Client-Procured Materials. Our-scope items are listed in the PDF but carry no charge.")
+
+            if st.button("📄 Generate Client Invoice PDF", type="primary", use_container_width=True):
                 date_label = f"{inv_start.strftime('%d-%m-%Y')} to {inv_end.strftime('%d-%m-%Y')}"
-                with st.spinner("Generating your invoice PDF..."):
-                    pdf_bytes = generate_client_invoice_bytes(inv_site, date_label, labor_details, pdf_mats, grand_total)
-                st.success("✅ Invoice ready to download!")
+                with st.spinner("Building your invoice..."):
+                    pdf_bytes = generate_client_invoice_bytes(
+                        inv_site, date_label, labor_details,
+                        pdf_client_mats, pdf_our_mats, grand_total
+                    )
+                st.success("✅ Invoice ready!")
                 st.download_button(
                     label="⬇️ Download Client Invoice (PDF)",
                     data=pdf_bytes,
-                    file_name=f"Client_Invoice_{inv_site}_{inv_start.strftime('%d%b')}.pdf",
+                    file_name=f"Client_Invoice_{inv_site}_{inv_start.strftime('%d%b%Y')}.pdf",
                     mime="application/pdf"
                 )
 
