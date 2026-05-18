@@ -771,7 +771,7 @@ def login_process():
                                     st.session_state.update({
                                         "logged_in": True,
                                         "phone": user["phone"],
-                                        "role": "user",
+                                        "role": user.get("role", "user"),
                                         "user_name": user["name"],
                                         "assigned_site": user.get("assigned_site", "All")
                                     })
@@ -817,9 +817,18 @@ if not st.session_state["logged_in"]:
     st.stop()
 
 # --- 8. SIDEBAR: USER PANEL + NAVIGATION ---
-tabs = ["📝 Daily Entry", "📊 Weekly Bill", "🧱 Materials", "📓 My Diary"]
-if st.session_state["role"] == "admin":
-    tabs += ["📈 Dashboard", "🧾 Client Invoice", "🔍 Site Logs", "📍 Sites", "👷 Contractors", "👥 Users", "📂 Archive & Recovery", "🔎 Search Results"]
+is_designer = (st.session_state["role"] == "designer")
+is_admin    = (st.session_state["role"] == "admin")
+
+# Build tab list per role
+if is_admin:
+    tabs = ["📝 Daily Entry", "📊 Weekly Bill", "🧱 Materials", "📓 My Diary",
+            "📈 Dashboard", "🧾 Client Invoice", "🔍 Site Logs", "📍 Sites",
+            "👷 Contractors", "👥 Users", "📂 Archive & Recovery", "🔎 Search Results"]
+elif is_designer:
+    tabs = ["🎨 Client Materials", "📓 My Diary"]
+else:
+    tabs = ["📝 Daily Entry", "📊 Weekly Bill", "🧱 Materials", "📓 My Diary"]
 
 if "current_tab" not in st.session_state or st.session_state["current_tab"] not in tabs:
     st.session_state["current_tab"] = tabs[0]
@@ -832,7 +841,7 @@ with st.sidebar:
         </div>
     """, unsafe_allow_html=True)
 
-    role_badge = "🛡️ Admin" if st.session_state["role"] == "admin" else "👷 Field User"
+    role_badge = "🛡️ Admin" if is_admin else ("🎨 Interior Designer" if is_designer else "👷 Field User")
     user_name = st.session_state.get("user_name", "User")
     st.markdown(f"""
         <div style='background:rgba(243,156,18,0.15); border:1px solid rgba(243,156,18,0.3);
@@ -843,7 +852,7 @@ with st.sidebar:
     """, unsafe_allow_html=True)
 
     # --- GLOBAL SEARCH (admin only) ---
-    if st.session_state["role"] == "admin":
+    if is_admin:
         st.markdown("<div style='font-size:0.72rem; color:#6B7280; font-weight:600; text-transform:uppercase; letter-spacing:0.1em; margin-bottom:0.4rem;'>QUICK SEARCH</div>", unsafe_allow_html=True)
         search_input = st.text_input(
             "search_box",
@@ -880,8 +889,8 @@ with st.sidebar:
 
     st.divider()
 
-    # PIN change for regular users
-    if st.session_state["role"] == "user":
+    # PIN change for regular users and designers
+    if st.session_state["role"] in ("user", "designer"):
         with st.expander("🔐 Change My PIN"):
             st.caption("Choose a new 4-digit numeric PIN for your next login.")
             new_pin = st.text_input("New 4-Digit PIN", max_chars=4, type="password", key="new_u_pin", placeholder="e.g. 5678")
@@ -1679,6 +1688,219 @@ elif current_tab == "🧾 Client Invoice":
                     mime="application/pdf"
                 )
 
+elif current_tab == "🎨 Client Materials":
+    # ── DESIGNER-ONLY TAB ─────────────────────────────────────────────────────
+    # Interior designers can log and manage materials for client invoices.
+    # They see NO labour costs, no financial totals — only material entry.
+    if not is_designer and not is_admin:
+        st.error("⛔ You don't have access to this page.")
+        st.stop()
+
+    page_header("🎨 Client Materials", "Log and manage materials for client projects")
+
+    df_sites = fetch_data("sites")
+    # Designers see only their assigned sites
+    av_sites = df_sites["name"].tolist() if not df_sites.empty else []
+    if not is_admin:
+        assigned_raw = st.session_state.get("assigned_site", "")
+        if "All" not in assigned_raw and "None/All" not in assigned_raw and assigned_raw.strip():
+            assigned_list = [s.strip() for s in assigned_raw.split(",")]
+            av_sites = [s for s in av_sites if s in assigned_list]
+
+    if not av_sites:
+        empty_state("🏗️", "No sites assigned", "Ask your admin to assign you to a project site.")
+        st.stop()
+
+    inv_site = st.selectbox("🏗️ Select Project Site", av_sites)
+    c_d1, c_d2 = st.columns(2)
+    inv_start = c_d1.date_input("📅 From", date.today() - timedelta(days=30), format="DD-MM-YYYY")
+    inv_end   = c_d2.date_input("📅 To",   date.today(),                      format="DD-MM-YYYY")
+
+    st.divider()
+
+    # Fetch materials for this site & period
+    df_materials = fetch_data("materials")
+    df_m_filtered = pd.DataFrame()
+
+    if not df_materials.empty:
+        df_materials["date_dt"] = pd.to_datetime(df_materials["date"]).dt.date
+        mask_m = (df_materials["site"] == inv_site) & \
+                 (df_materials["date_dt"] >= inv_start) & \
+                 (df_materials["date_dt"] <= inv_end)
+        df_m_filtered = df_materials[mask_m].copy()
+        if not df_m_filtered.empty:
+            df_m_filtered["formatted_date"] = pd.to_datetime(df_m_filtered["date"]).dt.strftime('%d-%m-%Y')
+
+    CLIENT_SCOPE = "Client-Procured"
+    OUR_SCOPE    = "Our Scope"
+    has_scope_col = not df_m_filtered.empty and "invoice_scope" in df_m_filtered.columns
+
+    if has_scope_col:
+        df_client_scope = df_m_filtered[df_m_filtered["invoice_scope"] == CLIENT_SCOPE].copy()
+        df_our_scope    = df_m_filtered[df_m_filtered["invoice_scope"] == OUR_SCOPE].copy()
+    else:
+        df_client_scope = df_m_filtered.copy()
+        df_our_scope    = pd.DataFrame()
+
+    st.markdown("""
+    <div style='background:#EEF9FF; border-left:4px solid #2980B9; border-radius:8px; padding:0.8rem 1.2rem; margin-bottom:1rem;'>
+    <b>🔴 Client-Procured</b> — Items purchased/billed in the company's name at the client's request (e.g. A/C, tiles).
+    The company paid the vendor; the client owes this amount back.<br><br>
+    <b>🟢 Our Scope</b> — Materials already included in the project quote. No additional charge to the client.
+    </div>
+    """, unsafe_allow_html=True)
+
+    mat_tab_client, mat_tab_ours = st.tabs(["🔴 Client-Procured Materials", "🟢 Our Scope Materials"])
+
+    # ── CLIENT-PROCURED TAB ───────────────────────────────────────────────────
+    with mat_tab_client:
+        st.caption("Items the client selected but were billed to the company — needs to be recovered from client.")
+
+        if not df_client_scope.empty:
+            df_show_c = df_client_scope[["formatted_date", "vendor", "material_name"]].rename(
+                columns={"formatted_date": "Date", "vendor": "Vendor", "material_name": "Description"}
+            )
+            st.dataframe(df_show_c, use_container_width=True, hide_index=True)
+            st.caption(f"**{len(df_client_scope)} entries** in this period.")
+        else:
+            st.info("ℹ️ No client-procured materials logged yet. Add them below.")
+
+        st.markdown("#### ➕ Add Client-Procured Material")
+        with st.form("designer_add_client_mat"):
+            dc1, dc2 = st.columns([1, 2])
+            cm_date   = dc1.date_input("Date of Purchase", inv_end, format="DD-MM-YYYY")
+            cm_vendor = dc2.text_input("Vendor / Supplier", placeholder="e.g. Samsung, XYZ Tiles, Kohler")
+            dc3, dc4  = st.columns([3, 1])
+            cm_desc   = dc3.text_input("Description", placeholder="e.g. Split A/C 1.5 Ton, Vitrified Floor Tiles (600×600)")
+            cm_qty    = dc4.number_input("Quantity", min_value=0.0, step=1.0, value=1.0)
+            cm_amt    = st.number_input("Total Amount (₹)", min_value=0.0, step=100.0,
+                                        help="The amount the vendor charged — billed to company, to recover from client.")
+            cm_receipt = st.file_uploader("🧾 Attach Bill / Receipt (optional)", type=["jpg", "jpeg", "png"])
+
+            if st.form_submit_button("💾 Save", type="primary"):
+                if not cm_desc.strip():
+                    st.error("⚠️ Please enter a description.")
+                elif not cm_vendor.strip():
+                    st.error("⚠️ Please enter the vendor name.")
+                else:
+                    receipt_link = ""
+                    if cm_receipt:
+                        with st.spinner("Uploading receipt..."):
+                            receipt_link = upload_evidence(cm_receipt)
+                    load = {
+                        "date": str(cm_date), "site": inv_site, "category": "Bill",
+                        "vendor": cm_vendor.strip(), "material_name": cm_desc.strip(),
+                        "quantity": cm_qty, "amount": cm_amt, "receipt_url": receipt_link
+                    }
+                    if has_scope_col:
+                        load["invoice_scope"] = CLIENT_SCOPE
+                    try:
+                        supabase.table("materials").insert(load).execute()
+                        st.success("✅ Saved!")
+                        time.sleep(1)
+                        st.rerun()
+                    except Exception:
+                        st.error("⚠️ Failed to save. Check your connection.")
+
+        if not df_client_scope.empty:
+            with st.expander("✏️ Edit or Delete an Entry"):
+                edit_opts = {
+                    f"{row['formatted_date']} — {row['material_name']} ({row.get('vendor','')})": row
+                    for _, row in df_client_scope.iterrows()
+                }
+                sel_key = st.selectbox("Select entry", list(edit_opts.keys()), key="des_sel_c")
+                sel_row = edit_opts[sel_key]
+                with st.form("designer_edit_client_mat"):
+                    de1, de2 = st.columns([1, 2])
+                    e_date   = de1.date_input("Date", pd.to_datetime(sel_row["date"]).date(), format="DD-MM-YYYY")
+                    e_vendor = de2.text_input("Vendor", value=str(sel_row.get("vendor", "")))
+                    de3, de4 = st.columns([3, 1])
+                    e_desc   = de3.text_input("Description", value=str(sel_row["material_name"]))
+                    e_qty    = de4.number_input("Qty", value=float(sel_row.get("quantity", 1)), step=1.0)
+                    e_amt    = st.number_input("Amount (₹)", value=float(sel_row["amount"]), step=100.0)
+                    btn1, btn2 = st.columns(2)
+                    if btn1.form_submit_button("✅ Update"):
+                        supabase.table("materials").update({
+                            "date": str(e_date), "vendor": e_vendor,
+                            "material_name": e_desc, "quantity": e_qty, "amount": e_amt
+                        }).eq("id", int(sel_row["id"])).execute()
+                        st.success("✅ Updated!")
+                        time.sleep(1)
+                        st.rerun()
+                    if btn2.form_submit_button("🗑️ Delete"):
+                        supabase.table("materials").delete().eq("id", int(sel_row["id"])).execute()
+                        st.success("✅ Deleted.")
+                        time.sleep(1)
+                        st.rerun()
+
+    # ── OUR-SCOPE TAB ─────────────────────────────────────────────────────────
+    with mat_tab_ours:
+        st.caption("Materials already covered in the project quote — no extra charge to the client.")
+
+        if not df_our_scope.empty:
+            df_show_o = df_our_scope[["formatted_date", "material_name"]].rename(
+                columns={"formatted_date": "Date", "material_name": "Description"}
+            )
+            df_show_o["Status"] = "✅ Included in Quote"
+            st.dataframe(df_show_o, use_container_width=True, hide_index=True)
+        else:
+            st.info("ℹ️ No our-scope materials logged yet. Add them below.")
+
+        st.markdown("#### ➕ Add Our-Scope Material")
+        with st.form("designer_add_our_mat"):
+            oc1, oc2 = st.columns([1, 2])
+            om_date = oc1.date_input("Date", inv_end, format="DD-MM-YYYY", key="des_om_date")
+            om_desc = oc2.text_input("Material Description", placeholder="e.g. Wall Paint — Asian Paints Royale")
+            oc3, oc4 = st.columns(2)
+            om_cat  = oc3.selectbox("Category", ["Civil Material", "Steel Material", "Soil Material", "RMC", "Other"], key="des_om_cat")
+            om_qty  = oc4.number_input("Quantity", min_value=0.0, step=1.0, value=1.0, key="des_om_qty")
+
+            if st.form_submit_button("💾 Save", type="primary"):
+                if om_desc.strip():
+                    load = {
+                        "date": str(om_date), "site": inv_site, "category": om_cat,
+                        "vendor": "Our Scope", "material_name": om_desc.strip(),
+                        "quantity": om_qty, "amount": 0.0, "receipt_url": ""
+                    }
+                    if has_scope_col:
+                        load["invoice_scope"] = OUR_SCOPE
+                    try:
+                        supabase.table("materials").insert(load).execute()
+                        st.success("✅ Saved!")
+                        time.sleep(1)
+                        st.rerun()
+                    except Exception:
+                        st.error("⚠️ Failed to save. Check your connection.")
+                else:
+                    st.error("⚠️ Please enter a description.")
+
+        if not df_our_scope.empty:
+            with st.expander("✏️ Edit or Delete an Entry"):
+                edit_opts_o = {
+                    f"{row['formatted_date']} — {row['material_name']}": row
+                    for _, row in df_our_scope.iterrows()
+                }
+                sel_key_o = st.selectbox("Select entry", list(edit_opts_o.keys()), key="des_sel_o")
+                sel_row_o = edit_opts_o[sel_key_o]
+                with st.form("designer_edit_our_mat"):
+                    oe1, oe2 = st.columns([1, 2])
+                    oe_date = oe1.date_input("Date", pd.to_datetime(sel_row_o["date"]).date(), format="DD-MM-YYYY")
+                    oe_desc = oe2.text_input("Description", value=str(sel_row_o["material_name"]))
+                    oe_qty  = st.number_input("Quantity", value=float(sel_row_o.get("quantity", 1)), step=1.0)
+                    ob1, ob2 = st.columns(2)
+                    if ob1.form_submit_button("✅ Update"):
+                        supabase.table("materials").update({
+                            "date": str(oe_date), "material_name": oe_desc, "quantity": oe_qty
+                        }).eq("id", int(sel_row_o["id"])).execute()
+                        st.success("✅ Updated!")
+                        time.sleep(1)
+                        st.rerun()
+                    if ob2.form_submit_button("🗑️ Delete"):
+                        supabase.table("materials").delete().eq("id", int(sel_row_o["id"])).execute()
+                        st.success("✅ Deleted.")
+                        time.sleep(1)
+                        st.rerun()
+
 elif current_tab == "🔍 Site Logs":
     page_header("🔍 Site Logs", "Browse, audit, and manage all recorded entries")
     response = supabase.table("entries").select("*").order("date", desc=True).limit(500).execute()
@@ -1866,7 +2088,8 @@ elif current_tab == "👥 Users":
         ph = c_u1.text_input("📱 Mobile Number (Unique ID)", max_chars=10, placeholder="10-digit number")
         nm = c_u2.text_input("👤 Full Name", placeholder="e.g. Ravi Kumar")
         c_u3, c_u4 = st.columns(2)
-        rl = c_u3.selectbox("🎭 Role", ["user", "admin"], help="'user' = field worker. 'admin' = full access.")
+        rl = c_u3.selectbox("🎭 Role", ["user", "designer", "admin"],
+                            help="'user' = field supervisor (labour entry). 'designer' = interior designer (client materials only). 'admin' = full access.")
         all_sites = fetch_data("sites")["name"].tolist()
         asites = c_u4.multiselect("🏗️ Assigned Sites", all_sites,
                                   help="Select sites this user can access. Leave blank to allow all sites.")
