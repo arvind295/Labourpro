@@ -438,8 +438,8 @@ def generate_client_invoice_bytes(site_name, date_range_label, labor_details,
     pdf.cell(100, 7, _safe(f"Billing Period: {date_range_label}"), 0, 1, 'L')
     pdf.ln(6)
 
-    # ── SECTION 1: CIVIL / PRE-WORK LABOUR — WEEKLY BREAKDOWN ───────────────
-    _pdf_section_header(pdf, 1, "CIVIL & PRE-WORK LABOUR (Charged to Client)", 44, 62, 80)
+    # ── SECTION 1: LABOUR — WEEKLY BREAKDOWN ────────────────────────────────
+    _pdf_section_header(pdf, 1, "CIVIL & PRE-WORK LABOUR", 44, 62, 80)
     pdf.set_font("Arial", 'I', 9)
     pdf.set_text_color(100, 100, 100)
     pdf.cell(0, 6,
@@ -449,57 +449,39 @@ def generate_client_invoice_bytes(site_name, date_range_label, labor_details,
     pdf.ln(2)
 
     if weekly_labour_rows:
-        # ── Weekly breakdown table — amount only (no worker counts shown to client) ──
-        _pdf_col_header(pdf, [140, 50], ["Week Period", "Amount (Rs)"])
-        pdf.set_font("Arial", '', 9)
-        for wrow in weekly_labour_rows:
-            amt = wrow.get('amount', 0.0)
-            pdf.cell(140, 9, _safe(f" {wrow['week']}"), 1, 0, 'L')
-            pdf.cell(50, 9, f"{amt:,.2f}", 1, 1, 'R')
-
+        # Only show weeks that have actual labour entries (amount > 0)
+        active_weeks = [w for w in weekly_labour_rows if w.get('amount', 0.0) > 0]
+        if active_weeks:
+            _pdf_col_header(pdf, [140, 50], ["Week Period", "Amount (Rs)"])
+            pdf.set_font("Arial", '', 9)
+            for wrow in active_weeks:
+                amt = wrow.get('amount', 0.0)
+                pdf.cell(140, 9, _safe(f" {wrow['week']}"), 1, 0, 'L')
+                pdf.cell(50, 9, f"{amt:,.2f}", 1, 1, 'R')
+        else:
+            pdf.cell(190, 9, "  No civil labour charged for this period.", 1, 1, 'C')
         pdf.set_text_color(0, 0, 0)
     else:
-        # Fallback: single summary row (no weekly data available)
-        _pdf_col_header(pdf, [55, 40, 45, 50], ["Labour Type", "Shifts", "Rate (Rs/shift)", "Amount (Rs)"])
-        pdf.set_font("Arial", '', 10)
-        if labor_details['m_count'] > 0:
-            pdf.cell(55, 9, "  Masons", 1, 0, 'L')
-            pdf.cell(40, 9, f"{labor_details['m_count']:.1f}", 1, 0, 'C')
-            pdf.cell(45, 9, f"{labor_details['m_rate']:,.2f}", 1, 0, 'C')
-            pdf.cell(50, 9, f"{(labor_details['m_count'] * labor_details['m_rate']):,.2f}", 1, 1, 'R')
-        if labor_details['h_count'] > 0:
-            pdf.cell(55, 9, "  Helpers", 1, 0, 'L')
-            pdf.cell(40, 9, f"{labor_details['h_count']:.1f}", 1, 0, 'C')
-            pdf.cell(45, 9, f"{labor_details['h_rate']:,.2f}", 1, 0, 'C')
-            pdf.cell(50, 9, f"{(labor_details['h_count'] * labor_details['h_rate']):,.2f}", 1, 1, 'R')
-        if labor_details['l_count'] > 0:
-            pdf.cell(55, 9, "  Ladies", 1, 0, 'L')
-            pdf.cell(40, 9, f"{labor_details['l_count']:.1f}", 1, 0, 'C')
-            pdf.cell(45, 9, f"{labor_details['l_rate']:,.2f}", 1, 0, 'C')
-            pdf.cell(50, 9, f"{(labor_details['l_count'] * labor_details['l_rate']):,.2f}", 1, 1, 'R')
-        if not any([labor_details['m_count'], labor_details['h_count'], labor_details['l_count']]):
-            pdf.cell(190, 9, "  No civil labour charged for this period.", 1, 1, 'C')
+        pdf.cell(190, 9, "  No civil labour charged for this period.", 1, 1, 'C')
 
     _pdf_subtotal_row(pdf, "Sub-Total - Labour:", labor_details['total'])
     pdf.ln(8)
 
-    # ── SECTION 2: CLIENT-PROCURED MATERIALS ────────────────────────────────
-    _pdf_section_header(pdf, 2, "MATERIALS PROCURED ON CLIENT'S BEHALF (To Recover)", 41, 128, 185)
+    # ── SECTION 2: MATERIALS ─────────────────────────────────────────────────
+    _pdf_section_header(pdf, 2, "MATERIALS", 41, 128, 185)
     pdf.set_font("Arial", 'I', 9)
     pdf.set_text_color(100, 100, 100)
     pdf.cell(0, 6,
-        "  Items purchased/billed in our name at client request - paid from our account, to be recovered.",
+        "  Materials purchased for the project.",
         0, 1, 'L')
     pdf.set_text_color(0, 0, 0)
     pdf.ln(2)
-    _pdf_col_header(pdf, [28, 112, 50], ["Date", "Description / Vendor", "Amount (Rs)"])
+    _pdf_col_header(pdf, [28, 112, 50], ["Date", "Description", "Amount (Rs)"])
     pdf.set_font("Arial", '', 10)
     client_mat_total = 0
     if not df_client_mats.empty:
         for _, r in df_client_mats.iterrows():
-            desc   = _safe(str(r.get("Description", "")).strip())
-            vendor = _safe(str(r.get("Vendor", "")).strip())
-            full_desc = _safe(f"{desc} [{vendor}]" if vendor and vendor.lower() not in ["", "client invoice", "-"] else desc)
+            desc = _safe(str(r.get("Description", "")).strip())
             if not desc:
                 continue
             m_date = _safe(str(r.get("Date", "")).strip()[:12])
@@ -509,49 +491,20 @@ def generate_client_invoice_bytes(site_name, date_range_label, labor_details,
                 amt = 0.0
             client_mat_total += amt
             pdf.cell(28, 9, m_date, 1, 0, 'C')
-            pdf.cell(112, 9, _safe(f" {full_desc[:60]}"), 1, 0, 'L')
+            pdf.cell(112, 9, _safe(f" {desc[:60]}"), 1, 0, 'L')
             pdf.cell(50, 9, f"{amt:,.2f}", 1, 1, 'R')
     else:
-        pdf.cell(190, 9, "  No client-procured materials for this period.", 1, 1, 'C')
-    _pdf_subtotal_row(pdf, "Sub-Total - Client Materials:", client_mat_total)
-    pdf.ln(8)
-
-    # ── SECTION 3: OUR SCOPE MATERIALS ──────────────────────────────────────
-    _pdf_section_header(pdf, 3, "OUR SCOPE MATERIALS (Included in Quote - No Additional Charge)", 39, 174, 96)
-    pdf.set_font("Arial", 'I', 9)
-    pdf.set_text_color(100, 100, 100)
-    pdf.cell(0, 6,
-        "  These materials are covered under the agreed project quote and are NOT billed separately.",
-        0, 1, 'L')
-    pdf.set_text_color(0, 0, 0)
-    pdf.ln(2)
-    _pdf_col_header(pdf, [28, 112, 50], ["Date", "Description", "Status"])
-    pdf.set_font("Arial", '', 10)
-    if not df_our_mats.empty:
-        for _, r in df_our_mats.iterrows():
-            desc = _safe(str(r.get("Description", "")).strip())
-            if not desc:
-                continue
-            m_date = _safe(str(r.get("Date", "")).strip()[:12])
-            pdf.cell(28, 9, m_date, 1, 0, 'C')
-            pdf.cell(112, 9, _safe(f" {desc[:60]}"), 1, 0, 'L')
-            pdf.cell(50, 9, "Included in Quote", 1, 1, 'C')
-    else:
-        pdf.cell(190, 9, "  No our-scope materials listed for this period.", 1, 1, 'C')
+        pdf.cell(190, 9, "  No materials for this period.", 1, 1, 'C')
+    _pdf_subtotal_row(pdf, "Sub-Total - Materials:", client_mat_total)
     pdf.ln(8)
 
     # ── GRAND TOTAL ──────────────────────────────────────────────────────────
     pdf.set_font("Arial", 'B', 14)
-    pdf.set_fill_color(46, 204, 113)
+    pdf.set_fill_color(44, 62, 80)
     pdf.set_text_color(255, 255, 255)
-    pdf.cell(140, 14, "  TOTAL AMOUNT TO RECOVER FROM CLIENT:", 1, 0, 'R', fill=True)
+    pdf.cell(140, 14, "  TOTAL AMOUNT:", 1, 0, 'R', fill=True)
     pdf.cell(50, 14, f"Rs. {grand_total:,.2f}", 1, 1, 'R', fill=True)
     pdf.set_text_color(0, 0, 0)
-    pdf.set_font("Arial", 'I', 9)
-    pdf.ln(4)
-    pdf.cell(0, 6,
-        f"  = Labour (Rs. {labor_details['total']:,.2f}) + Client Materials (Rs. {client_mat_total:,.2f})",
-        0, 1, 'L')
 
     return pdf.output(dest='S').encode('latin-1')
 
