@@ -390,14 +390,19 @@ def _pdf_col_header(pdf, widths, labels):
     pdf.ln()
 
 def _safe(text):
-    """Strip characters that can't be encoded in latin-1 (e.g. Rs symbol, em-dash)."""
+    """Sanitize any string for FPDF latin-1 output.
+    Replaces known problem chars first, then force-encodes everything else."""
+    if not isinstance(text, str):
+        text = str(text)
     replacements = {
-        '\u20b9': 'Rs.', '\u2014': '-', '\u2013': '-',
-        '\u2018': "'", '\u2019': "'", '\u201c': '"', '\u201d': '"',
-        '\u2022': '*', '\u00a0': ' ',
+        '\u20b9': 'Rs.', '\u2014': '-',  '\u2013': '-',
+        '\u2018': "'",   '\u2019': "'",  '\u201c': '"', '\u201d': '"',
+        '\u2022': '*',   '\u00a0': ' ',  '\u2026': '...',
+        '\u00e2': 'a',   '\u20ac': 'EUR',
     }
     for char, repl in replacements.items():
         text = text.replace(char, repl)
+    # Final safety net: drop anything still outside latin-1
     return text.encode('latin-1', errors='replace').decode('latin-1')
 
 def _pdf_subtotal_row(pdf, label, amount):
@@ -494,17 +499,17 @@ def generate_client_invoice_bytes(site_name, date_range_label, labor_details,
         for _, r in df_client_mats.iterrows():
             desc   = _safe(str(r.get("Description", "")).strip())
             vendor = _safe(str(r.get("Vendor", "")).strip())
-            full_desc = f"{desc} [{vendor}]" if vendor and vendor.lower() not in ["", "client invoice", "-"] else desc
+            full_desc = _safe(f"{desc} [{vendor}]" if vendor and vendor.lower() not in ["", "client invoice", "-"] else desc)
             if not desc:
                 continue
-            m_date = str(r.get("Date", "")).strip()[:12]
+            m_date = _safe(str(r.get("Date", "")).strip()[:12])
             try:
                 amt = float(r.get("Amount (Rs)", 0))
             except:
                 amt = 0.0
             client_mat_total += amt
             pdf.cell(28, 9, m_date, 1, 0, 'C')
-            pdf.cell(112, 9, f" {full_desc[:60]}", 1, 0, 'L')
+            pdf.cell(112, 9, _safe(f" {full_desc[:60]}"), 1, 0, 'L')
             pdf.cell(50, 9, f"{amt:,.2f}", 1, 1, 'R')
     else:
         pdf.cell(190, 9, "  No client-procured materials for this period.", 1, 1, 'C')
@@ -527,9 +532,9 @@ def generate_client_invoice_bytes(site_name, date_range_label, labor_details,
             desc = _safe(str(r.get("Description", "")).strip())
             if not desc:
                 continue
-            m_date = str(r.get("Date", "")).strip()[:12]
+            m_date = _safe(str(r.get("Date", "")).strip()[:12])
             pdf.cell(28, 9, m_date, 1, 0, 'C')
-            pdf.cell(112, 9, f" {desc[:60]}", 1, 0, 'L')
+            pdf.cell(112, 9, _safe(f" {desc[:60]}"), 1, 0, 'L')
             pdf.cell(50, 9, "Included in Quote", 1, 1, 'C')
     else:
         pdf.cell(190, 9, "  No our-scope materials listed for this period.", 1, 1, 'C')
@@ -548,7 +553,7 @@ def generate_client_invoice_bytes(site_name, date_range_label, labor_details,
         f"  = Labour (Rs. {labor_details['total']:,.2f}) + Client Materials (Rs. {client_mat_total:,.2f})",
         0, 1, 'L')
 
-    return bytes(pdf.output())
+    return pdf.output(dest='S').encode('latin-1')
 
 # --- WEEKLY BILL RENDERER ---
 def render_weekly_bill(df_entries, df_contractors):
