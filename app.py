@@ -373,13 +373,13 @@ class ClientInvoicePDF(FPDF):
         self.set_y(-15)
         self.set_font('Arial', 'I', 8)
         self.set_text_color(150, 150, 150)
-        self.cell(0, 10, f'Page {self.page_no()} — Confidential', 0, 0, 'C')
+        self.cell(0, 10, f'Page {self.page_no()} - Confidential', 0, 0, 'C')
 
 def _pdf_section_header(pdf, number, title, r, g, b):
     pdf.set_font("Arial", 'B', 13)
     pdf.set_fill_color(r, g, b)
     pdf.set_text_color(255, 255, 255)
-    pdf.cell(0, 10, f"  {number}. {title}", 0, 1, 'L', fill=True)
+    pdf.cell(0, 10, _safe(f"  {number}. {title}"), 0, 1, 'L', fill=True)
     pdf.set_text_color(0, 0, 0)
 
 def _pdf_col_header(pdf, widths, labels):
@@ -389,67 +389,102 @@ def _pdf_col_header(pdf, widths, labels):
         pdf.cell(w, 9, lbl, 1, 0, 'C', fill=True)
     pdf.ln()
 
+def _safe(text):
+    """Strip characters that can't be encoded in latin-1 (e.g. Rs symbol, em-dash)."""
+    replacements = {
+        '\u20b9': 'Rs.', '\u2014': '-', '\u2013': '-',
+        '\u2018': "'", '\u2019': "'", '\u201c': '"', '\u201d': '"',
+        '\u2022': '*', '\u00a0': ' ',
+    }
+    for char, repl in replacements.items():
+        text = text.replace(char, repl)
+    return text.encode('latin-1', errors='replace').decode('latin-1')
+
 def _pdf_subtotal_row(pdf, label, amount):
     pdf.set_font("Arial", 'B', 10)
     pdf.set_fill_color(236, 240, 241)
-    pdf.cell(140, 9, f"  {label}", 1, 0, 'R', fill=True)
+    pdf.cell(140, 9, _safe(f"  {label}"), 1, 0, 'R', fill=True)
     pdf.cell(50, 9, f"Rs. {amount:,.2f}", 1, 1, 'R', fill=True)
 
-def generate_client_invoice_bytes(site_name, date_range_label, labor_details, df_client_mats, df_our_mats, grand_total):
+def generate_client_invoice_bytes(site_name, date_range_label, labor_details,
+                                   df_client_mats, df_our_mats, grand_total,
+                                   weekly_labour_rows=None):
     """
     Generates a client-facing PDF invoice.
-    - labor_details: civil/pre-work labour charged to client
-    - df_client_mats: materials procured in our name but FOR the client (to be recovered)
-    - df_our_mats: reference list of our-scope materials (shown as 'Included in Quote' — no charge)
-    - grand_total: labour_total + client_mat_total only
+    - labor_details       : civil/pre-work labour summary dict
+    - df_client_mats      : materials procured in our name (to recover from client)
+    - df_our_mats         : our-scope materials (Included in Quote, no charge)
+    - grand_total         : labour_total + client_mat_total
+    - weekly_labour_rows  : list of dicts with weekly breakdown
+                            [{'week': '01-04-2026 to 07-04-2026',
+                              'mason': 8, 'helper': 4, 'ladies': 0,
+                              'rate_m': 600, 'rate_h': 400, 'rate_l': 350,
+                              'amount': 6400.0}, ...]
     """
     pdf = ClientInvoicePDF()
     pdf.add_page()
 
-    # Meta info
+    # ── META ─────────────────────────────────────────────────────────────────
     pdf.set_font("Arial", 'B', 11)
     pdf.set_text_color(44, 62, 80)
-    pdf.cell(100, 7, f"Project Site: {site_name}", 0, 0, 'L')
+    pdf.cell(100, 7, _safe(f"Project Site: {site_name}"), 0, 0, 'L')
     pdf.set_font("Arial", '', 10)
     pdf.cell(90, 7, f"Date Generated: {date.today().strftime('%d %b %Y')}", 0, 1, 'R')
-    pdf.set_font("Arial", '', 10)
-    pdf.cell(100, 7, f"Billing Period: {date_range_label}", 0, 1, 'L')
+    pdf.cell(100, 7, _safe(f"Billing Period: {date_range_label}"), 0, 1, 'L')
     pdf.ln(6)
 
-    # ── SECTION 1: CIVIL / PRE-WORK LABOUR ──────────────────────────────────
+    # ── SECTION 1: CIVIL / PRE-WORK LABOUR — WEEKLY BREAKDOWN ───────────────
     _pdf_section_header(pdf, 1, "CIVIL & PRE-WORK LABOUR (Charged to Client)", 44, 62, 80)
     pdf.set_font("Arial", 'I', 9)
     pdf.set_text_color(100, 100, 100)
-    pdf.cell(0, 6, "  Labour for civil/wall changes done before interior works — not covered in your quote.", 0, 1, 'L')
+    pdf.cell(0, 6,
+        "  Labour for civil/wall changes before interior works - not covered in your quote.",
+        0, 1, 'L')
     pdf.set_text_color(0, 0, 0)
     pdf.ln(2)
-    _pdf_col_header(pdf, [55, 40, 45, 50], ["Labour Type", "Shifts", "Rate (Rs/shift)", "Amount (Rs)"])
-    pdf.set_font("Arial", '', 10)
-    if labor_details['m_count'] > 0:
-        pdf.cell(55, 9, "  Masons", 1, 0, 'L')
-        pdf.cell(40, 9, f"{labor_details['m_count']:.1f}", 1, 0, 'C')
-        pdf.cell(45, 9, f"{labor_details['m_rate']:,.2f}", 1, 0, 'C')
-        pdf.cell(50, 9, f"{(labor_details['m_count'] * labor_details['m_rate']):,.2f}", 1, 1, 'R')
-    if labor_details['h_count'] > 0:
-        pdf.cell(55, 9, "  Helpers", 1, 0, 'L')
-        pdf.cell(40, 9, f"{labor_details['h_count']:.1f}", 1, 0, 'C')
-        pdf.cell(45, 9, f"{labor_details['h_rate']:,.2f}", 1, 0, 'C')
-        pdf.cell(50, 9, f"{(labor_details['h_count'] * labor_details['h_rate']):,.2f}", 1, 1, 'R')
-    if labor_details['l_count'] > 0:
-        pdf.cell(55, 9, "  Ladies", 1, 0, 'L')
-        pdf.cell(40, 9, f"{labor_details['l_count']:.1f}", 1, 0, 'C')
-        pdf.cell(45, 9, f"{labor_details['l_rate']:,.2f}", 1, 0, 'C')
-        pdf.cell(50, 9, f"{(labor_details['l_count'] * labor_details['l_rate']):,.2f}", 1, 1, 'R')
-    if labor_details['m_count'] == 0 and labor_details['h_count'] == 0 and labor_details['l_count'] == 0:
-        pdf.cell(190, 9, "  No civil labour charged for this period.", 1, 1, 'C')
-    _pdf_subtotal_row(pdf, "Sub-Total — Labour:", labor_details['total'])
+
+    if weekly_labour_rows:
+        # ── Weekly breakdown table — amount only (no worker counts shown to client) ──
+        _pdf_col_header(pdf, [140, 50], ["Week Period", "Amount (Rs)"])
+        pdf.set_font("Arial", '', 9)
+        for wrow in weekly_labour_rows:
+            amt = wrow.get('amount', 0.0)
+            pdf.cell(140, 9, _safe(f" {wrow['week']}"), 1, 0, 'L')
+            pdf.cell(50, 9, f"{amt:,.2f}", 1, 1, 'R')
+
+        pdf.set_text_color(0, 0, 0)
+    else:
+        # Fallback: single summary row (no weekly data available)
+        _pdf_col_header(pdf, [55, 40, 45, 50], ["Labour Type", "Shifts", "Rate (Rs/shift)", "Amount (Rs)"])
+        pdf.set_font("Arial", '', 10)
+        if labor_details['m_count'] > 0:
+            pdf.cell(55, 9, "  Masons", 1, 0, 'L')
+            pdf.cell(40, 9, f"{labor_details['m_count']:.1f}", 1, 0, 'C')
+            pdf.cell(45, 9, f"{labor_details['m_rate']:,.2f}", 1, 0, 'C')
+            pdf.cell(50, 9, f"{(labor_details['m_count'] * labor_details['m_rate']):,.2f}", 1, 1, 'R')
+        if labor_details['h_count'] > 0:
+            pdf.cell(55, 9, "  Helpers", 1, 0, 'L')
+            pdf.cell(40, 9, f"{labor_details['h_count']:.1f}", 1, 0, 'C')
+            pdf.cell(45, 9, f"{labor_details['h_rate']:,.2f}", 1, 0, 'C')
+            pdf.cell(50, 9, f"{(labor_details['h_count'] * labor_details['h_rate']):,.2f}", 1, 1, 'R')
+        if labor_details['l_count'] > 0:
+            pdf.cell(55, 9, "  Ladies", 1, 0, 'L')
+            pdf.cell(40, 9, f"{labor_details['l_count']:.1f}", 1, 0, 'C')
+            pdf.cell(45, 9, f"{labor_details['l_rate']:,.2f}", 1, 0, 'C')
+            pdf.cell(50, 9, f"{(labor_details['l_count'] * labor_details['l_rate']):,.2f}", 1, 1, 'R')
+        if not any([labor_details['m_count'], labor_details['h_count'], labor_details['l_count']]):
+            pdf.cell(190, 9, "  No civil labour charged for this period.", 1, 1, 'C')
+
+    _pdf_subtotal_row(pdf, "Sub-Total - Labour:", labor_details['total'])
     pdf.ln(8)
 
-    # ── SECTION 2: CLIENT-PROCURED MATERIALS (to recover) ───────────────────
+    # ── SECTION 2: CLIENT-PROCURED MATERIALS ────────────────────────────────
     _pdf_section_header(pdf, 2, "MATERIALS PROCURED ON CLIENT'S BEHALF (To Recover)", 41, 128, 185)
     pdf.set_font("Arial", 'I', 9)
     pdf.set_text_color(100, 100, 100)
-    pdf.cell(0, 6, "  Items purchased/billed in our name at client's request — amounts paid from our account, to be recovered.", 0, 1, 'L')
+    pdf.cell(0, 6,
+        "  Items purchased/billed in our name at client request - paid from our account, to be recovered.",
+        0, 1, 'L')
     pdf.set_text_color(0, 0, 0)
     pdf.ln(2)
     _pdf_col_header(pdf, [28, 112, 50], ["Date", "Description / Vendor", "Amount (Rs)"])
@@ -457,8 +492,8 @@ def generate_client_invoice_bytes(site_name, date_range_label, labor_details, df
     client_mat_total = 0
     if not df_client_mats.empty:
         for _, r in df_client_mats.iterrows():
-            desc = str(r.get("Description", "")).strip()
-            vendor = str(r.get("Vendor", "")).strip()
+            desc   = _safe(str(r.get("Description", "")).strip())
+            vendor = _safe(str(r.get("Vendor", "")).strip())
             full_desc = f"{desc} [{vendor}]" if vendor and vendor.lower() not in ["", "client invoice", "-"] else desc
             if not desc:
                 continue
@@ -473,21 +508,23 @@ def generate_client_invoice_bytes(site_name, date_range_label, labor_details, df
             pdf.cell(50, 9, f"{amt:,.2f}", 1, 1, 'R')
     else:
         pdf.cell(190, 9, "  No client-procured materials for this period.", 1, 1, 'C')
-    _pdf_subtotal_row(pdf, "Sub-Total — Client Materials:", client_mat_total)
+    _pdf_subtotal_row(pdf, "Sub-Total - Client Materials:", client_mat_total)
     pdf.ln(8)
 
-    # ── SECTION 3: OUR SCOPE MATERIALS (Included in Quote — not charged) ────
-    _pdf_section_header(pdf, 3, "OUR SCOPE MATERIALS (Included in Quote — No Additional Charge)", 39, 174, 96)
+    # ── SECTION 3: OUR SCOPE MATERIALS ──────────────────────────────────────
+    _pdf_section_header(pdf, 3, "OUR SCOPE MATERIALS (Included in Quote - No Additional Charge)", 39, 174, 96)
     pdf.set_font("Arial", 'I', 9)
     pdf.set_text_color(100, 100, 100)
-    pdf.cell(0, 6, "  These materials are covered under the agreed project quote and are NOT billed separately.", 0, 1, 'L')
+    pdf.cell(0, 6,
+        "  These materials are covered under the agreed project quote and are NOT billed separately.",
+        0, 1, 'L')
     pdf.set_text_color(0, 0, 0)
     pdf.ln(2)
     _pdf_col_header(pdf, [28, 112, 50], ["Date", "Description", "Status"])
     pdf.set_font("Arial", '', 10)
     if not df_our_mats.empty:
         for _, r in df_our_mats.iterrows():
-            desc = str(r.get("Description", "")).strip()
+            desc = _safe(str(r.get("Description", "")).strip())
             if not desc:
                 continue
             m_date = str(r.get("Date", "")).strip()[:12]
@@ -507,9 +544,11 @@ def generate_client_invoice_bytes(site_name, date_range_label, labor_details, df
     pdf.set_text_color(0, 0, 0)
     pdf.set_font("Arial", 'I', 9)
     pdf.ln(4)
-    pdf.cell(0, 6, f"  = Labour (Rs. {labor_details['total']:,.2f}) + Client Materials (Rs. {client_mat_total:,.2f})", 0, 1, 'L')
+    pdf.cell(0, 6,
+        f"  = Labour (Rs. {labor_details['total']:,.2f}) + Client Materials (Rs. {client_mat_total:,.2f})",
+        0, 1, 'L')
 
-    return pdf.output(dest='S').encode('latin-1')
+    return bytes(pdf.output())
 
 # --- WEEKLY BILL RENDERER ---
 def render_weekly_bill(df_entries, df_contractors):
@@ -1403,59 +1442,114 @@ elif current_tab == "🧾 Client Invoice":
 
             st.divider()
 
-            # ── STEP 2: Civil / Pre-work Labour ────────────────────────────────────
+            # ── STEP 2: Civil / Pre-work Labour — Weekly Breakdown ─────────────────
             st.markdown("### Step 2 — Civil & Pre-Work Labour")
             st.caption(
-                "Enter the labour that was done **before** interior work began (e.g. wall demolition, "
-                "civil changes) — this is NOT covered in your interior quote and must be recovered from the client. "
-                "Enter the number of shifts logged for this site in the selected period, and the rate you want to charge."
+                "Labour done before interior work (e.g. wall demolition, civil changes) — "
+                "NOT in your interior quote. The entries are grouped week-by-week (Saturday to Friday). "
+                "Set the rate you want to charge the client per shift."
             )
 
-            # Pull logged shifts for reference
+            # Pull logged shifts for this site & period
             df_entries = fetch_data("entries")
-            tot_mason = tot_helper = tot_ladies = 0
-            internal_total_labor = 0
+            df_e_site = pd.DataFrame()
 
             if not df_entries.empty:
                 df_entries["date_dt"] = pd.to_datetime(df_entries["date"]).dt.date
                 mask_e = (df_entries["site"] == inv_site) & \
                          (df_entries["date_dt"] >= inv_start) & \
                          (df_entries["date_dt"] <= inv_end)
-                df_e_filtered = df_entries[mask_e]
-                if not df_e_filtered.empty:
-                    tot_mason         = df_e_filtered["count_mason"].sum()
-                    tot_helper        = df_e_filtered["count_helper"].sum()
-                    tot_ladies        = df_e_filtered["count_ladies"].sum()
-                    internal_total_labor = df_e_filtered["total_cost"].sum()
+                df_e_site = df_entries[mask_e].copy()
 
-            st.info(
-                f"📊 Logged shifts this period — Masons: **{int(tot_mason)}**, "
-                f"Helpers: **{int(tot_helper)}**, Ladies: **{int(tot_ladies)}** "
-                f"| Internal payout: **₹{internal_total_labor:,.0f}**"
-            )
+            # Build week buckets (Sat–Fri) covering the selected range
+            def get_week_start(d):
+                # Saturday = weekday 5
+                days_since_sat = (d.weekday() + 2) % 7
+                return d - timedelta(days=days_since_sat)
 
-            c_l1, c_l2, c_l3 = st.columns(3)
-            client_mason_shifts  = c_l1.number_input(f"Mason Shifts to Bill",  min_value=0.0, value=float(tot_mason),  step=0.5, help="You can adjust this — bill only the civil pre-work shifts, not interior shifts.")
-            client_helper_shifts = c_l2.number_input(f"Helper Shifts to Bill", min_value=0.0, value=float(tot_helper), step=0.5)
-            client_ladies_shifts = c_l3.number_input(f"Ladies Shifts to Bill", min_value=0.0, value=float(tot_ladies), step=0.5)
+            # Collect all unique week starts that appear in the data
+            week_starts = set()
+            if not df_e_site.empty:
+                for d in df_e_site["date_dt"]:
+                    week_starts.add(get_week_start(d))
+            # Also cover the selected range even if no entries some weeks
+            cur = get_week_start(inv_start)
+            while cur <= inv_end:
+                week_starts.add(cur)
+                cur += timedelta(days=7)
+            week_starts = sorted(week_starts)
 
+            # Summary reference info box
+            if not df_e_site.empty:
+                tot_m_all = df_e_site["count_mason"].sum()
+                tot_h_all = df_e_site["count_helper"].sum()
+                tot_l_all = df_e_site["count_ladies"].sum()
+                tot_cost_all = df_e_site["total_cost"].sum()
+                st.info(
+                    f"📊 Logged entries this period — "
+                    f"Masons: **{tot_m_all:.0f}**, Helpers: **{tot_h_all:.0f}**, Ladies: **{tot_l_all:.0f}** "
+                    f"| Internal payout: **Rs. {tot_cost_all:,.0f}**"
+                )
+            else:
+                st.info("ℹ️ No labour entries logged for this site in the selected period.")
+
+            # Client billing rates (charged to client, can differ from internal rates)
+            st.markdown("**Set client billing rates (per shift):**")
             c_r1, c_r2, c_r3 = st.columns(3)
-            client_rate_mason  = c_r1.number_input(f"Rate/shift — Mason (₹)",  min_value=0.0, value=0.0, step=50.0)
-            client_rate_helper = c_r2.number_input(f"Rate/shift — Helper (₹)", min_value=0.0, value=0.0, step=50.0)
-            client_rate_ladies = c_r3.number_input(f"Rate/shift — Ladies (₹)", min_value=0.0, value=0.0, step=50.0)
+            client_rate_mason  = c_r1.number_input("Rate/shift — Mason (Rs)",  min_value=0.0, value=0.0, step=50.0, key="cr_m")
+            client_rate_helper = c_r2.number_input("Rate/shift — Helper (Rs)", min_value=0.0, value=0.0, step=50.0, key="cr_h")
+            client_rate_ladies = c_r3.number_input("Rate/shift — Ladies (Rs)", min_value=0.0, value=0.0, step=50.0, key="cr_l")
 
-            total_labor = (client_mason_shifts  * client_rate_mason) + \
-                          (client_helper_shifts * client_rate_helper) + \
-                          (client_ladies_shifts * client_rate_ladies)
+            # Build weekly rows for display and PDF
+            weekly_labour_rows = []
+            for ws in week_starts:
+                we = ws + timedelta(days=6)
+                # Filter entries in this week
+                if not df_e_site.empty:
+                    mask_w = (df_e_site["date_dt"] >= ws) & (df_e_site["date_dt"] <= we)
+                    df_week = df_e_site[mask_w]
+                    wm = float(df_week["count_mason"].sum())
+                    wh = float(df_week["count_helper"].sum())
+                    wl = float(df_week["count_ladies"].sum())
+                else:
+                    wm = wh = wl = 0.0
+                wamt = (wm * client_rate_mason) + (wh * client_rate_helper) + (wl * client_rate_ladies)
+                weekly_labour_rows.append({
+                    "week":    f"{ws.strftime('%d-%m-%Y')} to {we.strftime('%d-%m-%Y')}",
+                    "mason":   wm, "helper": wh, "ladies": wl,
+                    "rate_m":  client_rate_mason,
+                    "rate_h":  client_rate_helper,
+                    "rate_l":  client_rate_ladies,
+                    "amount":  wamt
+                })
 
-            st.metric("Total Labour to Recover from Client", f"₹{total_labor:,.2f}",
-                      help="This covers civil/pre-work labour only — interior labour is in your project quote.")
+            # Show weekly breakdown table in UI (admin sees full detail including worker counts)
+            if weekly_labour_rows:
+                st.markdown("**Weekly breakdown (your view — worker counts hidden in client PDF):**")
+                display_rows = []
+                for wr in weekly_labour_rows:
+                    display_rows.append({
+                        "Week": wr["week"],
+                        "Mason": f"{wr['mason']:.1f}" if wr['mason'] else "-",
+                        "Helper": f"{wr['helper']:.1f}" if wr['helper'] else "-",
+                        "Ladies": f"{wr['ladies']:.1f}" if wr['ladies'] else "-",
+                        "Amount (Rs)": f"{wr['amount']:,.2f}"
+                    })
+                st.dataframe(pd.DataFrame(display_rows), use_container_width=True, hide_index=True)
+                st.caption("🔒 The client PDF shows only the week period and amount — worker shift counts and rates are not included.")
+
+            total_labor = sum(r["amount"] for r in weekly_labour_rows)
+            tot_mason   = sum(r["mason"]  for r in weekly_labour_rows)
+            tot_helper  = sum(r["helper"] for r in weekly_labour_rows)
+            tot_ladies  = sum(r["ladies"] for r in weekly_labour_rows)
+
+            st.metric("Total Labour to Recover from Client", f"Rs. {total_labor:,.2f}")
 
             labor_details = {
-                'm_count': client_mason_shifts,  'm_rate': client_rate_mason,
-                'h_count': client_helper_shifts, 'h_rate': client_rate_helper,
-                'l_count': client_ladies_shifts, 'l_rate': client_rate_ladies,
-                'total': total_labor
+                'm_count': tot_mason,   'm_rate': client_rate_mason,
+                'h_count': tot_helper,  'h_rate': client_rate_helper,
+                'l_count': tot_ladies,  'l_rate': client_rate_ladies,
+                'total':   total_labor
             }
 
             st.divider()
@@ -1678,7 +1772,8 @@ elif current_tab == "🧾 Client Invoice":
                 with st.spinner("Building your invoice..."):
                     pdf_bytes = generate_client_invoice_bytes(
                         inv_site, date_label, labor_details,
-                        pdf_client_mats, pdf_our_mats, grand_total
+                        pdf_client_mats, pdf_our_mats, grand_total,
+                        weekly_labour_rows=weekly_labour_rows
                     )
                 st.success("✅ Invoice ready!")
                 st.download_button(
