@@ -43,9 +43,40 @@ except Exception:
 
 # --- 3. SESSION & COOKIE MANAGER ---
 def get_manager():
-    return stx.CookieManager()
+    return stx.CookieManager(key="cookie_manager_main")
 
 cookie_manager = get_manager()
+
+# The CookieManager component re-renders a hidden iframe every time .get() is
+# called, and calling it repeatedly in the same script run (once per field we
+# wanted to restore) was causing rendering glitches / reruns. Instead we read
+# every cookie ONCE per run into a session_state cache, and only touch the
+# real component again when we actually need to write or delete a cookie.
+def _load_cookies():
+    if st.session_state.get("_cookies_cache") is None:
+        try:
+            st.session_state["_cookies_cache"] = cookie_manager.get_all() or {}
+        except Exception:
+            st.session_state["_cookies_cache"] = {}
+    return st.session_state["_cookies_cache"]
+
+def _cookie_get(name):
+    return _load_cookies().get(name)
+
+def _cookie_set(name, value, **kwargs):
+    try:
+        cookie_manager.set(name, value, key=f"set_{name}_{uuid.uuid4().hex[:8]}", **kwargs)
+    except Exception:
+        pass
+    st.session_state.setdefault("_cookies_cache", {})[name] = value
+
+def _cookie_delete(name):
+    try:
+        cookie_manager.delete(name, key=f"del_{name}_{uuid.uuid4().hex[:8]}")
+    except Exception:
+        pass
+    if st.session_state.get("_cookies_cache"):
+        st.session_state["_cookies_cache"].pop(name, None)
 
 # --- 4. CUSTOM STYLING ---
 def apply_custom_styling():
@@ -629,7 +660,7 @@ def render_weekly_bill(df_entries, df_contractors):
 
                     with st.expander(f"📄 Day-by-Day: {con_name}"):
                         st.caption("— = no entry submitted. Nil = holiday/no-work entry submitted.")
-                        st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+                        st.dataframe(pd.DataFrame(rows), width='stretch', hide_index=True)
 
                 if pdf_data:
                     try:
@@ -688,7 +719,7 @@ def render_weekly_bill(df_entries, df_contractors):
 
                     with st.expander(f"📄 Day-by-Day: {site_name}"):
                         st.caption("— = no entry submitted. Nil = holiday/no-work entry submitted.")
-                        st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+                        st.dataframe(pd.DataFrame(rows), width='stretch', hide_index=True)
 
                 if pdf_data:
                     try:
@@ -710,8 +741,7 @@ if "search_query" not in st.session_state:
 if "search_active" not in st.session_state:
     st.session_state["search_active"] = False
 
-time.sleep(0.1)
-stored_token = cookie_manager.get("auth_token")
+stored_token = _cookie_get("auth_token")
 
 if not st.session_state["logged_in"] and stored_token:
     try:
@@ -727,14 +757,11 @@ if not st.session_state["logged_in"] and stored_token:
             })
             # Restore last active tab from cookie (so background-switch reloads land
             # back on the same page the user was on, not always Daily Entry)
-            saved_tab = cookie_manager.get("active_tab")
+            saved_tab = _cookie_get("active_tab")
             if saved_tab:
                 st.session_state["_restored_tab"] = saved_tab
         else:
-            try:
-                cookie_manager.delete("auth_token")
-            except KeyError:
-                pass
+            _cookie_delete("auth_token")
     except Exception:
         pass
 
@@ -762,7 +789,7 @@ def login_process():
                 ph = st.text_input("📱 Mobile Number", max_chars=10, placeholder="Enter your 10-digit mobile number")
                 pin = st.text_input("🔒 4-Digit PIN", type="password", max_chars=4, placeholder="Enter your 4-digit PIN")
                 st.markdown("<p style='font-size:0.8rem;color:#9CA3AF;'>Your PIN was set by your admin. Default is 1234 unless changed.</p>", unsafe_allow_html=True)
-                if st.form_submit_button("Login  →", type="primary", use_container_width=True):
+                if st.form_submit_button("Login  →", type="primary", width='stretch'):
                     if not ph or not pin:
                         st.warning("⚠️ Please enter both your mobile number and PIN.")
                     elif len(ph) != 10 or not ph.isdigit():
@@ -787,7 +814,7 @@ def login_process():
                                 else:
                                     new_token = str(uuid.uuid4())
                                     supabase.table("users").update({"session_token": new_token}).eq("phone", ph).execute()
-                                    cookie_manager.set("auth_token", new_token, expires_at=datetime.now() + timedelta(days=30))
+                                    _cookie_set("auth_token", new_token, expires_at=datetime.now() + timedelta(days=30))
                                     st.session_state.update({
                                         "logged_in": True,
                                         "phone": user["phone"],
@@ -807,7 +834,7 @@ def login_process():
                 st.caption("For administrators only. Use your registered admin mobile number and password.")
                 ph_a = st.text_input("Admin Mobile Number", placeholder="10-digit mobile")
                 pw_a = st.text_input("Admin Password", type="password", placeholder="Your admin password")
-                if st.form_submit_button("Admin Login", use_container_width=True):
+                if st.form_submit_button("Admin Login", width='stretch'):
                     if pw_a == ADMIN_LOGIN_PASS:
                         try:
                             response = supabase.table("users").select("*").eq("phone", ph_a).execute()
@@ -815,7 +842,7 @@ def login_process():
                                 user = response.data[0]
                                 new_token = str(uuid.uuid4())
                                 supabase.table("users").update({"session_token": new_token}).eq("phone", ph_a).execute()
-                                cookie_manager.set("auth_token", new_token, expires_at=datetime.now() + timedelta(days=30))
+                                _cookie_set("auth_token", new_token, expires_at=datetime.now() + timedelta(days=30))
                                 st.session_state.update({
                                     "logged_in": True,
                                     "phone": user["phone"],
@@ -879,14 +906,14 @@ with st.sidebar:
         )
         col_s1, col_s2 = st.columns([3, 1])
         with col_s1:
-            if st.button("Search", use_container_width=True, key="do_search"):
+            if st.button("Search", width='stretch', key="do_search"):
                 if search_input.strip():
                     st.session_state["search_query"] = search_input.strip()
                     st.session_state["search_active"] = True
                     st.session_state["current_tab"] = "🔎 Search Results"
                     st.rerun()
         with col_s2:
-            if st.button("✕", use_container_width=True, key="clear_search", help="Clear search"):
+            if st.button("✕", width='stretch', key="clear_search", help="Clear search"):
                 st.session_state["search_query"] = ""
                 st.session_state["search_active"] = False
                 if st.session_state["current_tab"] == "🔎 Search Results":
@@ -899,16 +926,16 @@ with st.sidebar:
         # Hide the Search Results tab from the nav list — it's reached via the search bar only
         if tab == "🔎 Search Results":
             continue
-        if st.button(tab, key=f"nav_{tab}", use_container_width=True):
+        if st.button(tab, key=f"nav_{tab}", width='stretch'):
             st.session_state["current_tab"] = tab
-            cookie_manager.set("active_tab", tab, expires_at=datetime.now() + timedelta(days=30))
+            _cookie_set("active_tab", tab, expires_at=datetime.now() + timedelta(days=30))
             st.rerun()
 
     # Keep active_tab cookie in sync, but only when it has changed
     # (writing on every render causes a re-render loop on heavy pages like Weekly Bill)
     _cur = st.session_state.get("current_tab", tabs[0])
     if st.session_state.get("_last_saved_tab") != _cur:
-        cookie_manager.set("active_tab", _cur, expires_at=datetime.now() + timedelta(days=30))
+        _cookie_set("active_tab", _cur, expires_at=datetime.now() + timedelta(days=30))
         st.session_state["_last_saved_tab"] = _cur
 
     st.divider()
@@ -929,7 +956,7 @@ with st.sidebar:
                     st.error("⚠️ PIN must be exactly 4 numeric digits.")
         st.markdown("<br>", unsafe_allow_html=True)
 
-    if st.button("🚪 Logout", use_container_width=True):
+    if st.button("🚪 Logout", width='stretch'):
         if st.session_state.get("phone"):
             try:
                 supabase.table("users").update({"session_token": None}).eq("phone", st.session_state["phone"]).execute()
@@ -937,7 +964,7 @@ with st.sidebar:
                 pass
         for _ck in ["auth_token", "active_tab", "last_site", "last_contractor"]:
             try:
-                cookie_manager.delete(_ck)
+                _cookie_delete(_ck)
             except KeyError:
                 pass
         st.session_state.clear()
@@ -987,8 +1014,8 @@ if current_tab == "📝 Daily Entry":
         # Step 1: Select Site, Date, Contractor
         # Restore last-used selections from cookies so a background-switch reload
         # doesn't wipe what the user had selected
-        _saved_site = cookie_manager.get("last_site")
-        _saved_con  = cookie_manager.get("last_contractor")
+        _saved_site = _cookie_get("last_site")
+        _saved_con  = _cookie_get("last_contractor")
 
         st.markdown("""<div class='step-card'><div class='step-label'>Step 1 — Choose Entry Details</div></div>""", unsafe_allow_html=True)
         c1, c2, c3 = st.columns(3)
@@ -1010,9 +1037,9 @@ if current_tab == "📝 Daily Entry":
 
         # Persist selections to cookies only when value actually changes
         if st_sel and st_sel != _saved_site:
-            cookie_manager.set("last_site", st_sel, expires_at=datetime.now() + timedelta(days=7))
+            _cookie_set("last_site", st_sel, expires_at=datetime.now() + timedelta(days=7))
         if con_sel and con_sel != _saved_con:
-            cookie_manager.set("last_contractor", con_sel, expires_at=datetime.now() + timedelta(days=7))
+            _cookie_set("last_contractor", con_sel, expires_at=datetime.now() + timedelta(days=7))
 
         if not st_sel or not con_sel:
             st.info("👆 Please select a **Site** and **Contractor** above to continue.")
@@ -1110,7 +1137,7 @@ if current_tab == "📝 Daily Entry":
             # Save Button
             st.markdown("---")
             btn_label = "💾 Update Entry" if mode == "edit" else "💾 Save New Entry"
-            if st.button(btn_label, type="primary", use_container_width=True):
+            if st.button(btn_label, type="primary", width='stretch'):
                 photo_link = ""
                 if uploaded_photo:
                     with st.spinner("Uploading photo... please wait"):
@@ -1153,7 +1180,7 @@ if current_tab == "📝 Daily Entry":
                 st.dataframe(df_recent[cols_to_show].rename(columns={
                     "date": "Date", "site": "Site", "contractor": "Contractor",
                     "total_cost": "Cost (₹)", "work_description": "Description"
-                }), use_container_width=True, hide_index=True)
+                }), width='stretch', hide_index=True)
             else:
                 empty_state("📋", "No entries yet", "Entries will appear here once the team starts logging.")
         except:
@@ -1257,7 +1284,7 @@ elif current_tab == "🧱 Materials":
                             m_receipt = st.file_uploader("🧾 Attach Bill/Receipt (Optional)", type=["jpg", "jpeg", "png"], key=f"rec_{cat}",
                                                          help="Upload a photo of the bill or receipt for documentation.")
 
-                            if st.form_submit_button("💾 Save Material Entry", type="primary", use_container_width=True):
+                            if st.form_submit_button("💾 Save Material Entry", type="primary", width='stretch'):
                                 if not m_vendor.strip():
                                     st.error("⚠️ Vendor name is required.")
                                 elif not m_material.strip():
@@ -1291,7 +1318,7 @@ elif current_tab == "🧱 Materials":
                                 display_df = df_cat[["date", "vendor", "material_name", "quantity", "amount"]].rename(
                                     columns={"date": "Date", "vendor": "Vendor", "material_name": "Material", "quantity": "Qty", "amount": "Amount (₹)"}
                                 )
-                                st.dataframe(display_df, use_container_width=True, hide_index=True)
+                                st.dataframe(display_df, width='stretch', hide_index=True)
                             else:
                                 empty_state("📦", f"No {cat} logged", f"Log a new {cat} entry using the form above.")
                         else:
@@ -1499,7 +1526,7 @@ elif current_tab == "🧾 Client Invoice":
                     total_mat = pdf_mats["Amount (Rs)"].sum()
 
             if not pdf_mats.empty:
-                st.dataframe(pdf_mats, use_container_width=True, hide_index=True)
+                st.dataframe(pdf_mats, width='stretch', hide_index=True)
             else:
                 st.info("ℹ️ No materials found in the database for this date range. You can add them below.")
 
@@ -1576,7 +1603,7 @@ elif current_tab == "🧾 Client Invoice":
             st.markdown(f"## 💰 Grand Total to Bill Client: ₹{grand_total:,.2f}")
             st.caption("This is the sum of billed labour + all materials in the selected period.")
 
-            if st.button("📄 Generate Professional Invoice PDF", type="primary", use_container_width=True):
+            if st.button("📄 Generate Professional Invoice PDF", type="primary", width='stretch'):
                 date_label = f"{inv_start.strftime('%d-%m-%Y')} to {inv_end.strftime('%d-%m-%Y')}"
                 with st.spinner("Generating your invoice PDF..."):
                     pdf_bytes = generate_client_invoice_bytes(inv_site, date_label, labor_details, pdf_mats, grand_total)
@@ -1620,7 +1647,7 @@ elif current_tab == "🔍 Site Logs":
             "id": "ID", "site": "Site", "contractor": "Contractor",
             "count_mason": "Masons", "count_helper": "Helpers", "count_ladies": "Ladies",
             "total_cost": "Cost (₹)", "work_description": "Description"
-        }), use_container_width=True, hide_index=True)
+        }), width='stretch', hide_index=True)
 
         st.divider()
         with st.expander("🗑️ Delete an Entry by ID"):
@@ -1644,7 +1671,7 @@ elif current_tab == "📍 Sites":
     page_header("📍 Sites", "Add and manage construction sites")
     sites_df = fetch_data("sites")
     if not sites_df.empty:
-        st.dataframe(sites_df, hide_index=True, use_container_width=True)
+        st.dataframe(sites_df, hide_index=True, width='stretch')
     else:
         empty_state("🏗️", "No sites added yet", "Add your first site using the form below.")
 
@@ -1701,7 +1728,7 @@ elif current_tab == "👷 Contractors":
                 columns={"name": "Contractor", "rate_mason": "Mason Rate (₹)", "rate_helper": "Helper Rate (₹)",
                          "rate_ladies": "Ladies Rate (₹)", "effective_date": "Effective From", "status": "Status"}
             ),
-            use_container_width=True, hide_index=True
+            width='stretch', hide_index=True
         )
     else:
         empty_state("👷", "No contractors yet", "Add your first contractor using the form below.")
@@ -1763,7 +1790,7 @@ elif current_tab == "👥 Users":
     page_header("👥 Users", "Add, update, or deactivate team members")
     users_df = fetch_data("users")
     if not users_df.empty:
-        st.dataframe(users_df, use_container_width=True, hide_index=True)
+        st.dataframe(users_df, width='stretch', hide_index=True)
     else:
         empty_state("👥", "No users yet", "Add your first team member using the form below.")
 
@@ -1877,7 +1904,7 @@ elif current_tab == "📂 Archive & Recovery":
                     cat = st.selectbox("Select Category", ["Entries", "Users", "Sites", "Contractors"])
                     k_map = {"Entries": "entries", "Users": "users", "Sites": "sites", "Contractors": "contractors"}
                     if d.get(k_map[cat]):
-                        st.dataframe(pd.DataFrame(d[k_map[cat]]), use_container_width=True, hide_index=True)
+                        st.dataframe(pd.DataFrame(d[k_map[cat]]), width='stretch', hide_index=True)
                     else:
                         st.warning(f"No {cat.lower()} data found in this backup file.")
                 elif view_mode == "Generate Weekly Bill from Archive":
@@ -2025,7 +2052,7 @@ elif current_tab == "🔎 Search Results":
             display_cols["Photo"] = "Photo"
 
         df_display = df_view[list(display_cols.keys())].rename(columns=display_cols)
-        st.dataframe(df_display, use_container_width=True, hide_index=True)
+        st.dataframe(df_display, width='stretch', hide_index=True)
 
         # CSV export of the current filtered results
         csv_bytes = df_display.to_csv(index=False).encode("utf-8")
@@ -2054,7 +2081,7 @@ elif current_tab == "🔎 Search Results":
                 .sort_values("Cost (₹)", ascending=False)
             )
             by_site["Cost (₹)"] = by_site["Cost (₹)"].apply(lambda x: f"₹{x:,.0f}")
-            st.dataframe(by_site, use_container_width=True, hide_index=True)
+            st.dataframe(by_site, width='stretch', hide_index=True)
 
         with bcol2:
             st.markdown("**By contractor**")
@@ -2066,7 +2093,7 @@ elif current_tab == "🔎 Search Results":
                 .sort_values("Cost (₹)", ascending=False)
             )
             by_con["Cost (₹)"] = by_con["Cost (₹)"].apply(lambda x: f"₹{x:,.0f}")
-            st.dataframe(by_con, use_container_width=True, hide_index=True)
+            st.dataframe(by_con, width='stretch', hide_index=True)
 
     # ── back / new search nudge ───────────────────────────────────────────────
     st.divider()
