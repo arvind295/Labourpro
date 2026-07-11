@@ -42,10 +42,21 @@ except Exception:
     st.stop()
 
 # --- 3. SESSION & COOKIE MANAGER ---
-def get_manager():
-    return stx.CookieManager(key="cookie_manager_main")
+# A no-op stand-in so that if the real CookieManager component fails to
+# initialize (frontend asset mismatch, blocked iframe in some deployment
+# sandboxes, etc.) the WHOLE APP doesn't crash on every load. Without this,
+# a single failed component mount here would hang the page on "Connecting..."
+# forever since the script errors out before Streamlit can render anything.
+class _DummyCookieManager:
+    def get_all(self, *a, **kw): return {}
+    def get(self, *a, **kw): return None
+    def set(self, *a, **kw): pass
+    def delete(self, *a, **kw): pass
 
-cookie_manager = get_manager()
+try:
+    cookie_manager = stx.CookieManager(key="cookie_manager_main")
+except Exception:
+    cookie_manager = _DummyCookieManager()
 
 # The CookieManager component re-renders a hidden iframe every time .get() is
 # called, and calling it repeatedly in the same script run (once per field we
@@ -1526,7 +1537,11 @@ elif current_tab == "🧾 Client Invoice":
                     total_mat = pdf_mats["Amount (Rs)"].sum()
 
             if not pdf_mats.empty:
-                st.dataframe(pdf_mats, width='stretch', hide_index=True)
+                # Using st.table instead of st.dataframe here on purpose: st.dataframe
+                # serializes through pyarrow (a C++ library) which has been segfaulting
+                # on this environment's Python 3.13 build. st.table renders as plain
+                # HTML instead, avoiding that native code path entirely.
+                st.table(pdf_mats.reset_index(drop=True))
             else:
                 st.info("ℹ️ No materials found in the database for this date range. You can add them below.")
 
