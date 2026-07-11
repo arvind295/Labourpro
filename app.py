@@ -313,17 +313,35 @@ class PDFBill(FPDF):
         self.set_font('Arial', 'I', 8)
         self.cell(0, 10, f'Page {self.page_no()}', 0, 0, 'C')
 
+def _pdf_safe(text):
+    """Make any string safe for FPDF's Latin-1-only core fonts.
+    Swaps common 'smart' characters (curly quotes, em/en-dashes, the ₹ sign,
+    ellipsis) for plain ASCII equivalents, then drops anything else that still
+    can't be encoded — so a stray emoji or symbol in a site/contractor name
+    can never crash PDF generation again."""
+    if text is None:
+        return ""
+    text = str(text)
+    replacements = {
+        "\u2018": "'", "\u2019": "'", "\u201c": '"', "\u201d": '"',
+        "\u2013": "-", "\u2014": "-", "\u2026": "...", "\u20b9": "Rs. ",
+        "\u00a0": " ",
+    }
+    for bad, good in replacements.items():
+        text = text.replace(bad, good)
+    return text.encode("latin-1", errors="replace").decode("latin-1")
+
 def generate_pdf_bytes(header_name, week_label, billing_data):
     pdf = PDFBill()
     pdf.add_page()
     pdf.set_font("Arial", 'B', 12)
-    pdf.cell(0, 10, f"Bill For: {header_name}", 0, 1, 'L')
-    pdf.cell(0, 10, f"Week: {week_label}", 0, 1, 'L')
+    pdf.cell(0, 10, _pdf_safe(f"Bill For: {header_name}"), 0, 1, 'L')
+    pdf.cell(0, 10, _pdf_safe(f"Week: {week_label}"), 0, 1, 'L')
     pdf.ln(5)
     for item in billing_data:
         pdf.set_fill_color(220, 220, 220)
         pdf.set_font("Arial", 'B', 12)
-        pdf.cell(0, 10, f"{item['name']}", 0, 1, 'L', fill=True)
+        pdf.cell(0, 10, _pdf_safe(item['name']), 0, 1, 'L', fill=True)
         pdf.set_font("Arial", 'B', 10)
         pdf.cell(30, 8, "Date", 1)
         pdf.cell(20, 8, "Mason", 1)
@@ -332,21 +350,23 @@ def generate_pdf_bytes(header_name, week_label, billing_data):
         pdf.ln()
         pdf.set_font("Arial", '', 10)
         for row in item['rows']:
-            pdf.cell(30, 8, str(row['Date']), 1)
-            pdf.cell(20, 8, str(row['Mason']), 1)
-            pdf.cell(20, 8, str(row['Helper']), 1)
-            pdf.cell(20, 8, str(row['Ladies']), 1)
+            pdf.cell(30, 8, _pdf_safe(row['Date']), 1)
+            pdf.cell(20, 8, _pdf_safe(row['Mason']), 1)
+            pdf.cell(20, 8, _pdf_safe(row['Helper']), 1)
+            pdf.cell(20, 8, _pdf_safe(row['Ladies']), 1)
             pdf.ln()
         pdf.set_font("Arial", 'B', 10)
         pdf.cell(30, 8, "Totals", 1)
-        pdf.cell(20, 8, str(item['totals']['m']), 1)
-        pdf.cell(20, 8, str(item['totals']['h']), 1)
-        pdf.cell(20, 8, str(item['totals']['l']), 1)
+        pdf.cell(20, 8, _pdf_safe(item['totals']['m']), 1)
+        pdf.cell(20, 8, _pdf_safe(item['totals']['h']), 1)
+        pdf.cell(20, 8, _pdf_safe(item['totals']['l']), 1)
         pdf.ln()
         pdf.set_font("Arial", 'B', 12)
         pdf.cell(90, 10, f"Total: Rs. {item['totals']['amt']:,.2f}", 1, 0, 'R')
         pdf.ln(15)
     return pdf.output(dest='S').encode('latin-1')
+
+
 
 # --- PDF ENGINE FOR MATERIALS ---
 class MaterialPDF(FPDF):
@@ -363,8 +383,8 @@ def generate_material_pdf_bytes(site_name, period_label, df_mat):
     pdf = MaterialPDF()
     pdf.add_page()
     pdf.set_font("Arial", 'B', 12)
-    pdf.cell(0, 10, f"Site: {site_name}", 0, 1, 'L')
-    pdf.cell(0, 10, f"Period: {period_label}", 0, 1, 'L')
+    pdf.cell(0, 10, _pdf_safe(f"Site: {site_name}"), 0, 1, 'L')
+    pdf.cell(0, 10, _pdf_safe(f"Period: {period_label}"), 0, 1, 'L')
     pdf.ln(5)
     total_grand = 0
     categories = ["Civil Material", "Steel Material", "Soil Material", "RMC"]
@@ -384,12 +404,12 @@ def generate_material_pdf_bytes(site_name, period_label, df_mat):
             pdf.set_font("Arial", '', 9)
             cat_total = 0
             for _, row in df_cat.iterrows():
-                pdf.cell(25, 8, str(row.get('date', '')), 1)
-                vendor = str(row.get('vendor', ''))[:22]
-                material = str(row.get('material_name', ''))[:40]
+                pdf.cell(25, 8, _pdf_safe(row.get('date', '')), 1)
+                vendor = _pdf_safe(str(row.get('vendor', ''))[:22])
+                material = _pdf_safe(str(row.get('material_name', ''))[:40])
                 pdf.cell(50, 8, vendor, 1)
                 pdf.cell(80, 8, material, 1)
-                pdf.cell(15, 8, str(row.get('quantity', '')), 1)
+                pdf.cell(15, 8, _pdf_safe(row.get('quantity', '')), 1)
                 amt = float(row.get('amount', 0))
                 cat_total += amt
                 pdf.cell(20, 8, f"{amt:,.0f}", 1)
@@ -422,7 +442,7 @@ def generate_client_invoice_bytes(site_name, date_range_label, labor_details, df
     pdf.add_page()
     pdf.set_font("Arial", 'B', 12)
     pdf.set_text_color(44, 62, 80)
-    pdf.cell(100, 8, f"Project Site: {site_name}", 0, 0, 'L')
+    pdf.cell(100, 8, _pdf_safe(f"Project Site: {site_name}"), 0, 0, 'L')
     pdf.set_font("Arial", '', 11)
     pdf.cell(90, 8, f"Date Generated: {date.today().strftime('%d %b %Y')}", 0, 1, 'R')
     pdf.cell(100, 8, f"Billing Period: {date_range_label}", 0, 1, 'L')
@@ -480,8 +500,8 @@ def generate_client_invoice_bytes(site_name, date_range_label, labor_details, df
             try: amt = float(r.get("Amount (Rs)", 0))
             except: amt = 0.0
             mat_total += amt
-            pdf.cell(30, 10, f"{m_date[:12]}", 1, 0, 'C')
-            pdf.cell(110, 10, f" {desc[:55]}", 1, 0, 'L')
+            pdf.cell(30, 10, _pdf_safe(m_date[:12]), 1, 0, 'C')
+            pdf.cell(110, 10, _pdf_safe(f" {desc[:55]}"), 1, 0, 'L')
             pdf.cell(50, 10, f"{amt:,.2f}", 1, 1, 'R')
     else:
         pdf.cell(190, 10, "No materials entered for this period.", 1, 1, 'C')
@@ -548,7 +568,7 @@ def _build_week_rows(df_sub, full_week_dates, rm, rh, rl):
                 dl = str(int(l) if l == int(l) else l)
         else:
             m, h, l, daily_cost = 0.0, 0.0, 0.0, 0.0
-            dm, dh, dl = "—", "—", "—"
+            dm, dh, dl = "-", "-", "-"
         rows.append({"Date": day_date.strftime("%d-%m-%Y"), "Mason": dm, "Helper": dh, "Ladies": dl})
         tm += m; th += h; tl += l; tamt += daily_cost
 
