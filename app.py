@@ -90,7 +90,7 @@ def apply_custom_styling():
         section[data-testid="stSidebar"] .stAlert { background-color: rgba(255,255,255,0.08) !important; border: none !important; }
         section[data-testid="stSidebar"] input {
             background-color: rgba(255,255,255,0.1) !important;
-            color: #1A202C !important; /* CHANGED HERE: Dark text so it is visible in the search bar */
+            color: #FFFFFF !important;
             border: 1px solid rgba(255,255,255,0.2) !important;
         }
 
@@ -367,154 +367,161 @@ class ClientInvoicePDF(FPDF):
     def header(self):
         self.set_font('Arial', 'B', 22)
         self.set_text_color(44, 62, 80)
-        self.cell(0, 15, 'CLIENT EXPENSE RECOVERY INVOICE', 0, 1, 'C')
-        self.ln(3)
+        self.cell(0, 15, 'WEEKLY EXPENSE REPORT', 0, 1, 'C')
+        self.ln(5)
     def footer(self):
         self.set_y(-15)
         self.set_font('Arial', 'I', 8)
         self.set_text_color(150, 150, 150)
-        self.cell(0, 10, f'Page {self.page_no()} - Confidential', 0, 0, 'C')
+        self.cell(0, 10, f'Page {self.page_no()}', 0, 0, 'C')
 
-def _pdf_section_header(pdf, number, title, r, g, b):
-    pdf.set_font("Arial", 'B', 13)
-    pdf.set_fill_color(r, g, b)
-    pdf.set_text_color(255, 255, 255)
-    pdf.cell(0, 10, _safe(f"  {number}. {title}"), 0, 1, 'L', fill=True)
-    pdf.set_text_color(0, 0, 0)
-
-def _pdf_col_header(pdf, widths, labels):
-    pdf.set_font("Arial", 'B', 10)
-    pdf.set_fill_color(236, 240, 241)
-    for w, lbl in zip(widths, labels):
-        pdf.cell(w, 9, lbl, 1, 0, 'C', fill=True)
-    pdf.ln()
-
-def _safe(text):
-    """Sanitize any string for FPDF latin-1 output.
-    Replaces known problem chars first, then force-encodes everything else."""
-    if not isinstance(text, str):
-        text = str(text)
-    replacements = {
-        '\u20b9': 'Rs.', '\u2014': '-',  '\u2013': '-',
-        '\u2018': "'",   '\u2019': "'",  '\u201c': '"', '\u201d': '"',
-        '\u2022': '*',   '\u00a0': ' ',  '\u2026': '...',
-        '\u00e2': 'a',   '\u20ac': 'EUR',
-    }
-    for char, repl in replacements.items():
-        text = text.replace(char, repl)
-    # Final safety net: drop anything still outside latin-1
-    return text.encode('latin-1', errors='replace').decode('latin-1')
-
-def _pdf_subtotal_row(pdf, label, amount):
-    pdf.set_font("Arial", 'B', 10)
-    pdf.set_fill_color(236, 240, 241)
-    pdf.cell(140, 9, _safe(f"  {label}"), 1, 0, 'R', fill=True)
-    pdf.cell(50, 9, f"Rs. {amount:,.2f}", 1, 1, 'R', fill=True)
-
-def generate_client_invoice_bytes(site_name, date_range_label, labor_details,
-                                   df_client_mats, df_our_mats, grand_total,
-                                   weekly_labour_rows=None):
-    """
-    Generates a client-facing PDF invoice.
-    - labor_details       : civil/pre-work labour summary dict
-    - df_client_mats      : materials procured in our name (to recover from client)
-    - df_our_mats         : our-scope materials (Included in Quote, no charge)
-    - grand_total         : labour_total + client_mat_total
-    - weekly_labour_rows  : list of dicts with weekly breakdown
-                            [{'week': '01-04-2026 to 07-04-2026',
-                              'mason': 8, 'helper': 4, 'ladies': 0,
-                              'rate_m': 600, 'rate_h': 400, 'rate_l': 350,
-                              'amount': 6400.0}, ...]
-    """
+def generate_client_invoice_bytes(site_name, date_range_label, labor_details, df_mats, grand_total):
     pdf = ClientInvoicePDF()
     pdf.add_page()
-
-    # ── META ─────────────────────────────────────────────────────────────────
-    pdf.set_font("Arial", 'B', 11)
+    pdf.set_font("Arial", 'B', 12)
     pdf.set_text_color(44, 62, 80)
-    pdf.cell(100, 7, _safe(f"Project Site: {site_name}"), 0, 0, 'L')
-    pdf.set_font("Arial", '', 10)
-    pdf.cell(90, 7, f"Date Generated: {date.today().strftime('%d %b %Y')}", 0, 1, 'R')
-    pdf.cell(100, 7, _safe(f"Billing Period: {date_range_label}"), 0, 1, 'L')
-    pdf.ln(6)
-
-    # ── SECTION 1: LABOUR — WEEKLY BREAKDOWN ────────────────────────────────
-    _pdf_section_header(pdf, 1, "CIVIL & PRE-WORK LABOUR", 44, 62, 80)
-    pdf.set_font("Arial", 'I', 9)
-    pdf.set_text_color(100, 100, 100)
-    pdf.cell(0, 6,
-        "  Labour for civil/wall changes before interior works - not covered in your quote.",
-        0, 1, 'L')
-    pdf.set_text_color(0, 0, 0)
-    pdf.ln(2)
-
-    if weekly_labour_rows:
-        # Only show weeks that have actual labour entries (amount > 0)
-        active_weeks = [w for w in weekly_labour_rows if w.get('amount', 0.0) > 0]
-        if active_weeks:
-            _pdf_col_header(pdf, [140, 50], ["Week Period", "Amount (Rs)"])
-            pdf.set_font("Arial", '', 9)
-            for wrow in active_weeks:
-                amt = wrow.get('amount', 0.0)
-                pdf.cell(140, 9, _safe(f" {wrow['week']}"), 1, 0, 'L')
-                pdf.cell(50, 9, f"{amt:,.2f}", 1, 1, 'R')
-        else:
-            pdf.cell(190, 9, "  No civil labour charged for this period.", 1, 1, 'C')
-        pdf.set_text_color(0, 0, 0)
-    else:
-        pdf.cell(190, 9, "  No civil labour charged for this period.", 1, 1, 'C')
-
-    _pdf_subtotal_row(pdf, "Sub-Total - Labour:", labor_details['total'])
-    pdf.ln(8)
-
-    # ── SECTION 2: MATERIALS ─────────────────────────────────────────────────
-    _pdf_section_header(pdf, 2, "MATERIALS", 41, 128, 185)
-    pdf.set_font("Arial", 'I', 9)
-    pdf.set_text_color(100, 100, 100)
-    pdf.cell(0, 6,
-        "  Materials purchased for the project.",
-        0, 1, 'L')
-    pdf.set_text_color(0, 0, 0)
-    pdf.ln(2)
-    _pdf_col_header(pdf, [28, 112, 50], ["Date", "Description", "Amount (Rs)"])
-    pdf.set_font("Arial", '', 10)
-    client_mat_total = 0
-    if not df_client_mats.empty:
-        for _, r in df_client_mats.iterrows():
-            desc = _safe(str(r.get("Description", "")).strip())
-            if not desc:
-                continue
-            m_date = _safe(str(r.get("Date", "")).strip()[:12])
-            try:
-                amt = float(r.get("Amount (Rs)", 0))
-            except:
-                amt = 0.0
-            client_mat_total += amt
-            pdf.cell(28, 9, m_date, 1, 0, 'C')
-            pdf.cell(112, 9, _safe(f" {desc[:60]}"), 1, 0, 'L')
-            pdf.cell(50, 9, f"{amt:,.2f}", 1, 1, 'R')
-    else:
-        pdf.cell(190, 9, "  No materials for this period.", 1, 1, 'C')
-    _pdf_subtotal_row(pdf, "Sub-Total - Materials:", client_mat_total)
-    pdf.ln(8)
-
-    # ── GRAND TOTAL ──────────────────────────────────────────────────────────
+    pdf.cell(100, 8, f"Project Site: {site_name}", 0, 0, 'L')
+    pdf.set_font("Arial", '', 11)
+    pdf.cell(90, 8, f"Date Generated: {date.today().strftime('%d %b %Y')}", 0, 1, 'R')
+    pdf.cell(100, 8, f"Billing Period: {date_range_label}", 0, 1, 'L')
+    pdf.ln(10)
     pdf.set_font("Arial", 'B', 14)
-    pdf.set_fill_color(44, 62, 80)
+    pdf.set_fill_color(52, 73, 94)
     pdf.set_text_color(255, 255, 255)
-    pdf.cell(140, 14, "  TOTAL AMOUNT:", 1, 0, 'R', fill=True)
-    pdf.cell(50, 14, f"Rs. {grand_total:,.2f}", 1, 1, 'R', fill=True)
+    pdf.cell(0, 10, " 1. LABOR EXPENSES", 0, 1, 'L', fill=True)
     pdf.set_text_color(0, 0, 0)
-
+    pdf.set_font("Arial", 'B', 11)
+    pdf.set_fill_color(236, 240, 241)
+    pdf.cell(50, 10, "Labor Type", 1, 0, 'C', fill=True)
+    pdf.cell(45, 10, "Total Shifts", 1, 0, 'C', fill=True)
+    pdf.cell(45, 10, "Rate (Rs)", 1, 0, 'C', fill=True)
+    pdf.cell(50, 10, "Amount (Rs)", 1, 1, 'C', fill=True)
+    pdf.set_font("Arial", '', 11)
+    if labor_details['m_count'] > 0:
+        pdf.cell(50, 10, " Masons", 1, 0, 'L')
+        pdf.cell(45, 10, f"{labor_details['m_count']}", 1, 0, 'C')
+        pdf.cell(45, 10, f"{labor_details['m_rate']:,.2f}", 1, 0, 'C')
+        pdf.cell(50, 10, f"{(labor_details['m_count'] * labor_details['m_rate']):,.2f}", 1, 1, 'R')
+    if labor_details['h_count'] > 0:
+        pdf.cell(50, 10, " Helpers", 1, 0, 'L')
+        pdf.cell(45, 10, f"{labor_details['h_count']}", 1, 0, 'C')
+        pdf.cell(45, 10, f"{labor_details['h_rate']:,.2f}", 1, 0, 'C')
+        pdf.cell(50, 10, f"{(labor_details['h_count'] * labor_details['h_rate']):,.2f}", 1, 1, 'R')
+    if labor_details['l_count'] > 0:
+        pdf.cell(50, 10, " Ladies", 1, 0, 'L')
+        pdf.cell(45, 10, f"{labor_details['l_count']}", 1, 0, 'C')
+        pdf.cell(45, 10, f"{labor_details['l_rate']:,.2f}", 1, 0, 'C')
+        pdf.cell(50, 10, f"{(labor_details['l_count'] * labor_details['l_rate']):,.2f}", 1, 1, 'R')
+    if labor_details['m_count'] == 0 and labor_details['h_count'] == 0 and labor_details['l_count'] == 0:
+        pdf.cell(190, 10, "No labor entered for this period.", 1, 1, 'C')
+    pdf.set_font("Arial", 'B', 11)
+    pdf.cell(140, 10, "Total Labor Cost:", 1, 0, 'R', fill=True)
+    pdf.cell(50, 10, f"Rs. {labor_details['total']:,.2f}", 1, 1, 'R', fill=True)
+    pdf.ln(10)
+    pdf.set_font("Arial", 'B', 14)
+    pdf.set_fill_color(52, 73, 94)
+    pdf.set_text_color(255, 255, 255)
+    pdf.cell(0, 10, " 2. MATERIAL EXPENSES", 0, 1, 'L', fill=True)
+    pdf.set_font("Arial", 'B', 11)
+    pdf.set_text_color(0, 0, 0)
+    pdf.set_fill_color(236, 240, 241)
+    pdf.cell(30, 10, "Date", 1, 0, 'C', fill=True)
+    pdf.cell(110, 10, "Material Description", 1, 0, 'C', fill=True)
+    pdf.cell(50, 10, "Amount", 1, 1, 'C', fill=True)
+    pdf.set_font("Arial", '', 11)
+    mat_total = 0
+    if not df_mats.empty:
+        for _, r in df_mats.iterrows():
+            desc = str(r.get("Description", "")).strip()
+            if not desc: continue
+            m_date = str(r.get("Date", "")).strip()
+            try: amt = float(r.get("Amount (Rs)", 0))
+            except: amt = 0.0
+            mat_total += amt
+            pdf.cell(30, 10, f"{m_date[:12]}", 1, 0, 'C')
+            pdf.cell(110, 10, f" {desc[:55]}", 1, 0, 'L')
+            pdf.cell(50, 10, f"{amt:,.2f}", 1, 1, 'R')
+    else:
+        pdf.cell(190, 10, "No materials entered for this period.", 1, 1, 'C')
+    pdf.set_font("Arial", 'B', 11)
+    pdf.cell(140, 10, "Total Material Cost:", 1, 0, 'R', fill=True)
+    pdf.cell(50, 10, f"Rs. {mat_total:,.2f}", 1, 1, 'R', fill=True)
+    pdf.ln(15)
+    pdf.set_font("Arial", 'B', 16)
+    pdf.set_fill_color(46, 204, 113)
+    pdf.set_text_color(255, 255, 255)
+    pdf.cell(140, 15, " GRAND TOTAL DUE:", 1, 0, 'R', fill=True)
+    pdf.cell(50, 15, f"Rs. {grand_total:,.2f}", 1, 1, 'R', fill=True)
     return pdf.output(dest='S').encode('latin-1')
 
 # --- WEEKLY BILL RENDERER ---
+def _safe_get_rates(df_contractors, contractor_name, week_start_obj):
+    """Safely fetch mason/helper/ladies rates for a contractor on a given week.
+    Returns (rm, rh, rl) as floats, defaulting to 0 on any error."""
+    try:
+        rates = df_contractors[df_contractors["name"] == contractor_name].copy()
+        if rates.empty:
+            return 0.0, 0.0, 0.0
+        # Drop rows where effective_date is NaT / None
+        rates = rates.dropna(subset=["effective_date"])
+        if rates.empty:
+            return 0.0, 0.0, 0.0
+        rates = rates.sort_values("effective_date", ascending=False)
+        # Only compare dates to dates (both must be datetime.date)
+        valid = rates[rates["effective_date"].apply(
+            lambda d: d <= week_start_obj if isinstance(d, type(week_start_obj)) else False
+        )]
+        row = valid.iloc[0] if not valid.empty else rates.iloc[0]
+        return float(row["rate_mason"]), float(row["rate_helper"]), float(row["rate_ladies"])
+    except Exception:
+        return 0.0, 0.0, 0.0
+
+
+def _build_week_rows(df_sub, full_week_dates, rm, rh, rl):
+    """Build the 7-day row list and totals for one contractor+site block."""
+    # Build entry_map: date → record. Guard against NaT in date_dt.
+    entry_map = {}
+    for _, row in df_sub.iterrows():
+        dt_val = row.get("date_dt")
+        if pd.notna(dt_val):
+            try:
+                entry_map[dt_val.date()] = row
+            except Exception:
+                pass
+
+    rows = []
+    tm, th, tl, tamt = 0.0, 0.0, 0.0, 0.0
+    for day_date in full_week_dates:
+        if day_date in entry_map:
+            r = entry_map[day_date]
+            m = float(r.get("count_mason", 0) or 0)
+            h = float(r.get("count_helper", 0) or 0)
+            l = float(r.get("count_ladies", 0) or 0)
+            daily_cost = (m * rm) + (h * rh) + (l * rl)
+            if m == 0 and h == 0 and l == 0:
+                dm, dh, dl = "Nil", "Nil", "Nil"
+            else:
+                dm = str(int(m) if m == int(m) else m)
+                dh = str(int(h) if h == int(h) else h)
+                dl = str(int(l) if l == int(l) else l)
+        else:
+            m, h, l, daily_cost = 0.0, 0.0, 0.0, 0.0
+            dm, dh, dl = "—", "—", "—"
+        rows.append({"Date": day_date.strftime("%d-%m-%Y"), "Mason": dm, "Helper": dh, "Ladies": dl})
+        tm += m; th += h; tl += l; tamt += daily_cost
+
+    return rows, tm, th, tl, tamt
+
+
 def render_weekly_bill(df_entries, df_contractors):
+    # ── guard: no data ─────────────────────────────────────────────────────────
     if df_entries.empty:
         empty_state("📊", "No entries yet", "Start by logging daily attendance in the Daily Entry tab.")
         return
 
     is_admin = (st.session_state["role"] == "admin")
+
+    # ── filter by assigned sites for non-admin users ───────────────────────────
     if not is_admin:
         assigned_raw = st.session_state.get("assigned_site", "")
         if "All" not in assigned_raw and "None/All" not in assigned_raw:
@@ -524,163 +531,175 @@ def render_weekly_bill(df_entries, df_contractors):
                 empty_state("🏗️", "No data for your sites", "Your assigned sites have no entries in this period.")
                 return
 
-    df_entries["date_dt"] = pd.to_datetime(df_entries["date"], errors='coerce')
-    df_contractors["effective_date"] = pd.to_datetime(df_contractors["effective_date"], errors='coerce').dt.date
+    # ── parse dates ────────────────────────────────────────────────────────────
+    df_entries = df_entries.copy()
+    df_entries["date_dt"] = pd.to_datetime(df_entries["date"], errors="coerce")
     df_entries = df_entries.dropna(subset=["date_dt"])
     if df_entries.empty:
         empty_state("📅", "No valid dates found", "Check that your entries have proper dates.")
         return
 
-    df_entries["start_date"] = df_entries["date_dt"].dt.date.apply(get_billing_start_date)
-    df_entries["end_date"] = df_entries["start_date"] + timedelta(days=6)
-    df_entries["week_label"] = df_entries.apply(lambda x: f"{x['start_date'].strftime('%d-%m-%Y')} to {x['end_date'].strftime('%d-%m-%Y')}", axis=1)
+    # Ensure effective_date in contractors is always datetime.date (not Timestamp/NaT)
+    df_contractors = df_contractors.copy()
+    df_contractors["effective_date"] = pd.to_datetime(
+        df_contractors["effective_date"], errors="coerce"
+    ).dt.date
 
-    unique_weeks = df_entries[["start_date", "week_label"]].drop_duplicates().sort_values("start_date", ascending=False)
+    # ── build week labels ──────────────────────────────────────────────────────
+    df_entries["start_date"] = df_entries["date_dt"].dt.date.apply(get_billing_start_date)
+    df_entries["week_label"] = df_entries["start_date"].apply(
+        lambda s: f"{s.strftime('%d-%m-%Y')} to {(s + timedelta(days=6)).strftime('%d-%m-%Y')}"
+    )
+
+    unique_weeks = (
+        df_entries[["start_date", "week_label"]]
+        .drop_duplicates()
+        .sort_values("start_date", ascending=False)
+    )
     weeks = unique_weeks["week_label"].tolist()
 
+    # ── week selector ──────────────────────────────────────────────────────────
     st.markdown("#### 📅 Select a Week to View")
-    sel_week = st.selectbox("Billing Week", weeks, help="Each week runs Saturday to Friday. Select any week to see the full bill.") if weeks else None
-
+    sel_week = st.selectbox(
+        "Billing Week", weeks,
+        help="Each week runs Saturday → Friday. Select any week to see the full bill."
+    )
     if not sel_week:
         return
 
     df_week = df_entries[df_entries["week_label"] == sel_week].copy()
-    week_start_obj = df_week.iloc[0]["start_date"]
+    week_start_obj = df_week.iloc[0]["start_date"]   # datetime.date
     full_week_dates = [week_start_obj + timedelta(days=i) for i in range(7)]
 
     if is_admin:
-        csv_data = df_week.to_csv(index=False).encode('utf-8')
-        st.download_button(f"📊 Download Week Data (CSV)", csv_data, f"Data_{sel_week}.csv", "text/csv",
-                           help="Download all raw entries for this week as a CSV/Excel-compatible file.")
+        csv_data = df_week.to_csv(index=False).encode("utf-8")
+        st.download_button(
+            "📊 Download Week Data (CSV)", csv_data,
+            f"Data_{sel_week}.csv", "text/csv",
+            help="Download all raw entries for this week as a CSV/Excel file."
+        )
         st.divider()
 
+    # ── two view tabs (NO st.stop() inside tabs — use early return guards) ─────
     tab_site, tab_con = st.tabs(["🏢 View by Site", "👷 View by Contractor"])
 
+    # ════════════════════════════════
+    # TAB A — View by Site
+    # ════════════════════════════════
     with tab_site:
-        all_sites = sorted(df_week["site"].unique())
+        all_sites = sorted(df_week["site"].dropna().unique().tolist())
         if not all_sites:
             empty_state("🏗️", "No sites found for this week")
-            st.stop()
-        sel_site = st.pills("Select a Site", all_sites, key="sb_site", default=all_sites[0] if all_sites else None)
-        if sel_site:
-            st.divider()
-            st.markdown(f"### 📍 {sel_site}")
-            df_view = df_week[df_week["site"] == sel_site]
-            pdf_data = []
+        else:
+            sel_site = st.pills(
+                "Select a Site", all_sites,
+                key=f"sb_site_{sel_week}",          # week-scoped key — avoids stale key clash
+                default=all_sites[0]
+            )
+            if sel_site:
+                st.divider()
+                st.markdown(f"### 📍 {sel_site}")
+                df_view = df_week[df_week["site"] == sel_site]
+                pdf_data = []
 
-            for con_name in df_view["contractor"].unique():
-                df_sub = df_view[df_view["contractor"] == con_name]
-                entry_map = {d.date(): r for d, r in zip(df_sub["date_dt"], df_sub.to_dict('records'))}
-                rates = df_contractors[df_contractors["name"] == con_name].sort_values("effective_date", ascending=False)
-                rm, rh, rl = 0, 0, 0
-                if not rates.empty:
-                    valid_rates = rates[rates["effective_date"] <= week_start_obj]
-                    curr = valid_rates.iloc[0] if not valid_rates.empty else rates.iloc[0]
-                    rm, rh, rl = curr["rate_mason"], curr["rate_helper"], curr["rate_ladies"]
+                for con_name in df_view["contractor"].dropna().unique():
+                    df_sub = df_view[df_view["contractor"] == con_name]
+                    rm, rh, rl = _safe_get_rates(df_contractors, con_name, week_start_obj)
+                    rows, tm, th, tl, tamt = _build_week_rows(df_sub, full_week_dates, rm, rh, rl)
+                    pdf_data.append({
+                        "name": con_name, "rows": rows,
+                        "totals": {"m": tm, "h": th, "l": tl, "amt": tamt},
+                        "rates": {"rm": rm, "rh": rh, "rl": rl}
+                    })
 
-                rows = []
-                tm, th, tl, tamt = 0, 0, 0, 0
-                for day_date in full_week_dates:
-                    if day_date in entry_map:
-                        r = entry_map[day_date]
-                        m, h, l = r["count_mason"], r["count_helper"], r["count_ladies"]
-                        current_daily_cost = (m * rm) + (h * rh) + (l * rl)
-                        dm, dh, dl = ("Nil", "Nil", "Nil") if (m == 0 and h == 0 and l == 0) else (str(m), str(h), str(l))
+                    st.markdown(f"#### 👷 {con_name}")
+                    if rm == 0 and rh == 0 and rl == 0:
+                        st.caption("⚠️ No rates found for this contractor — amounts show as ₹0. Add rates in the Contractors tab.")
+                    if is_admin:
+                        k1, k2, k3, k4 = st.columns(4)
+                        k1.metric("💰 Amount Payable", f"₹{tamt:,.0f}")
+                        k2.metric("🧱 Mason Shifts", f"{tm:g}")
+                        k3.metric("🛠️ Helper Shifts", f"{th:g}")
+                        k4.metric("👩 Ladies Shifts", f"{tl:g}")
                     else:
-                        m, h, l, current_daily_cost = 0, 0, 0, 0
-                        dm, dh, dl = "0", "0", "0"
-                    rows.append({"Date": day_date.strftime("%d-%m-%Y"), "Mason": dm, "Helper": dh, "Ladies": dl})
-                    tm += m; th += h; tl += l; tamt += current_daily_cost
+                        k2, k3, k4 = st.columns(3)
+                        k2.metric("🧱 Mason Shifts", f"{tm:g}")
+                        k3.metric("🛠️ Helper Shifts", f"{th:g}")
+                        k4.metric("👩 Ladies Shifts", f"{tl:g}")
 
-                pdf_data.append({"name": con_name, "rows": rows, "totals": {"m": tm, "h": th, "l": tl, "amt": tamt}, "rates": {"rm": rm, "rh": rh, "rl": rl}})
+                    with st.expander(f"📄 Day-by-Day: {con_name}"):
+                        st.caption("— = no entry submitted. Nil = holiday/no-work entry submitted.")
+                        st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
 
-                st.markdown(f"#### 👷 {con_name}")
-                if is_admin:
-                    k1, k2, k3, k4 = st.columns(4)
-                    k1.metric("💰 Amount Payable", f"₹{tamt:,.0f}")
-                    k2.metric("🧱 Mason Shifts", f"{tm}")
-                    k3.metric("🛠️ Helper Shifts", f"{th}")
-                    k4.metric("👩 Ladies Shifts", f"{tl}")
-                else:
-                    k2, k3, k4 = st.columns(3)
-                    k2.metric("🧱 Mason Shifts", f"{tm}")
-                    k3.metric("🛠️ Helper Shifts", f"{th}")
-                    k4.metric("👩 Ladies Shifts", f"{tl}")
+                if pdf_data:
+                    try:
+                        pdf_bytes = generate_pdf_bytes(sel_site, sel_week, pdf_data)
+                        st.download_button(
+                            f"⬇️ Download PDF Bill — {sel_site}", pdf_bytes,
+                            f"Bill_{sel_site}.pdf", "application/pdf",
+                            help="Formatted PDF bill for all contractors at this site."
+                        )
+                    except Exception as e:
+                        st.warning(f"⚠️ Could not generate PDF: {e}")
 
-                with st.expander(f"📄 View Day-by-Day: {con_name}"):
-                    st.caption("Showing all 7 days of the week. Days with no entry show 0. Nil means a holiday/no-work entry was submitted.")
-                    st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
-
-            if pdf_data:
-                try:
-                    pdf_bytes = generate_pdf_bytes(sel_site, sel_week, pdf_data)
-                    st.download_button(f"⬇️ Download PDF Bill — {sel_site}", pdf_bytes, f"Bill_{sel_site}.pdf", "application/pdf",
-                                       help="Download a formatted PDF bill for all contractors at this site for the selected week.")
-                except:
-                    pass
-
+    # ════════════════════════════════
+    # TAB B — View by Contractor
+    # ════════════════════════════════
     with tab_con:
-        all_cons = sorted(df_week["contractor"].unique())
+        all_cons = sorted(df_week["contractor"].dropna().unique().tolist())
         if not all_cons:
             empty_state("👷", "No contractors found for this week")
-            st.stop()
-        sel_con = st.pills("Select a Contractor", all_cons, key="sb_con", default=all_cons[0] if all_cons else None)
-        if sel_con:
-            st.divider()
-            st.markdown(f"### 👷 {sel_con}")
-            df_view = df_week[df_week["contractor"] == sel_con]
-            pdf_data = []
+        else:
+            sel_con = st.pills(
+                "Select a Contractor", all_cons,
+                key=f"sb_con_{sel_week}",           # week-scoped key
+                default=all_cons[0]
+            )
+            if sel_con:
+                st.divider()
+                st.markdown(f"### 👷 {sel_con}")
+                df_view = df_week[df_week["contractor"] == sel_con]
+                pdf_data = []
 
-            for site_name in df_view["site"].unique():
-                df_sub = df_view[df_view["site"] == site_name]
-                entry_map = {d.date(): r for d, r in zip(df_sub["date_dt"], df_sub.to_dict('records'))}
-                rates = df_contractors[df_contractors["name"] == sel_con].sort_values("effective_date", ascending=False)
-                rm, rh, rl = 0, 0, 0
-                if not rates.empty:
-                    valid_rates = rates[rates["effective_date"] <= week_start_obj]
-                    curr = valid_rates.iloc[0] if not valid_rates.empty else rates.iloc[0]
-                    rm, rh, rl = curr["rate_mason"], curr["rate_helper"], curr["rate_ladies"]
+                for site_name in df_view["site"].dropna().unique():
+                    df_sub = df_view[df_view["site"] == site_name]
+                    rm, rh, rl = _safe_get_rates(df_contractors, sel_con, week_start_obj)
+                    rows, tm, th, tl, tamt = _build_week_rows(df_sub, full_week_dates, rm, rh, rl)
+                    pdf_data.append({
+                        "name": site_name, "rows": rows,
+                        "totals": {"m": tm, "h": th, "l": tl, "amt": tamt},
+                        "rates": {"rm": rm, "rh": rh, "rl": rl}
+                    })
 
-                rows = []
-                tm, th, tl, tamt = 0, 0, 0, 0
-                for day_date in full_week_dates:
-                    if day_date in entry_map:
-                        r = entry_map[day_date]
-                        m, h, l = r["count_mason"], r["count_helper"], r["count_ladies"]
-                        current_daily_cost = (m * rm) + (h * rh) + (l * rl)
-                        dm, dh, dl = ("Nil", "Nil", "Nil") if (m == 0 and h == 0 and l == 0) else (str(m), str(h), str(l))
+                    st.markdown(f"#### 📍 {site_name}")
+                    if rm == 0 and rh == 0 and rl == 0:
+                        st.caption("⚠️ No rates found — amounts show as ₹0. Add rates in the Contractors tab.")
+                    if is_admin:
+                        k1, k2, k3, k4 = st.columns(4)
+                        k1.metric("💰 Amount Payable", f"₹{tamt:,.0f}")
+                        k2.metric("🧱 Mason Shifts", f"{tm:g}")
+                        k3.metric("🛠️ Helper Shifts", f"{th:g}")
+                        k4.metric("👩 Ladies Shifts", f"{tl:g}")
                     else:
-                        m, h, l, current_daily_cost = 0, 0, 0, 0
-                        dm, dh, dl = "0", "0", "0"
-                    rows.append({"Date": day_date.strftime("%d-%m-%Y"), "Mason": dm, "Helper": dh, "Ladies": dl})
-                    tm += m; th += h; tl += l; tamt += current_daily_cost
+                        k2, k3, k4 = st.columns(3)
+                        k2.metric("🧱 Mason Shifts", f"{tm:g}")
+                        k3.metric("🛠️ Helper Shifts", f"{th:g}")
+                        k4.metric("👩 Ladies Shifts", f"{tl:g}")
 
-                pdf_data.append({"name": site_name, "rows": rows, "totals": {"m": tm, "h": th, "l": tl, "amt": tamt}, "rates": {"rm": rm, "rh": rh, "rl": rl}})
+                    with st.expander(f"📄 Day-by-Day: {site_name}"):
+                        st.caption("— = no entry submitted. Nil = holiday/no-work entry submitted.")
+                        st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
 
-                st.markdown(f"#### 📍 {site_name}")
-                if is_admin:
-                    k1, k2, k3, k4 = st.columns(4)
-                    k1.metric("💰 Amount Payable", f"₹{tamt:,.0f}")
-                    k2.metric("🧱 Mason Shifts", f"{tm}")
-                    k3.metric("🛠️ Helper Shifts", f"{th}")
-                    k4.metric("👩 Ladies Shifts", f"{tl}")
-                else:
-                    k2, k3, k4 = st.columns(3)
-                    k2.metric("🧱 Mason Shifts", f"{tm}")
-                    k3.metric("🛠️ Helper Shifts", f"{th}")
-                    k4.metric("👩 Ladies Shifts", f"{tl}")
-
-                with st.expander(f"📄 View Day-by-Day: {site_name}"):
-                    st.caption("Showing all 7 days of the week.")
-                    st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
-
-            if pdf_data:
-                try:
-                    pdf_bytes = generate_pdf_bytes(sel_con, sel_week, pdf_data)
-                    st.download_button(f"⬇️ Download PDF Bill — {sel_con}", pdf_bytes, f"Bill_{sel_con}.pdf", "application/pdf",
-                                       help="Download a formatted PDF bill for this contractor across all sites for the selected week.")
-                except:
-                    pass
+                if pdf_data:
+                    try:
+                        pdf_bytes = generate_pdf_bytes(sel_con, sel_week, pdf_data)
+                        st.download_button(
+                            f"⬇️ Download PDF Bill — {sel_con}", pdf_bytes,
+                            f"Bill_{sel_con}.pdf", "application/pdf",
+                            help="Formatted PDF bill for this contractor across all sites."
+                        )
+                    except Exception as e:
+                        st.warning(f"⚠️ Could not generate PDF: {e}")
 
 # --- 6. AUTO-LOGIN CHECK ---
 if "logged_in" not in st.session_state:
@@ -706,7 +725,11 @@ if not st.session_state["logged_in"] and stored_token:
                 "user_name": user["name"],
                 "assigned_site": user.get("assigned_site", "All")
             })
-            st.toast(f"👋 Welcome back, {user['name']}!")
+            # Restore last active tab from cookie (so background-switch reloads land
+            # back on the same page the user was on, not always Daily Entry)
+            saved_tab = cookie_manager.get("active_tab")
+            if saved_tab:
+                st.session_state["_restored_tab"] = saved_tab
         else:
             try:
                 cookie_manager.delete("auth_token")
@@ -768,7 +791,7 @@ def login_process():
                                     st.session_state.update({
                                         "logged_in": True,
                                         "phone": user["phone"],
-                                        "role": user.get("role", "user"),
+                                        "role": "user",
                                         "user_name": user["name"],
                                         "assigned_site": user.get("assigned_site", "All")
                                     })
@@ -814,21 +837,17 @@ if not st.session_state["logged_in"]:
     st.stop()
 
 # --- 8. SIDEBAR: USER PANEL + NAVIGATION ---
-is_designer = (st.session_state["role"] == "designer")
-is_admin    = (st.session_state["role"] == "admin")
-
-# Build tab list per role
-if is_admin:
-    tabs = ["📝 Daily Entry", "📊 Weekly Bill", "🧱 Materials", "📓 My Diary",
-            "📈 Dashboard", "🧾 Client Invoice", "🔍 Site Logs", "📍 Sites",
-            "👷 Contractors", "👥 Users", "📂 Archive & Recovery", "🔎 Search Results"]
-elif is_designer:
-    tabs = ["🎨 Client Materials", "📓 My Diary"]
-else:
-    tabs = ["📝 Daily Entry", "📊 Weekly Bill", "🧱 Materials", "📓 My Diary"]
+tabs = ["📝 Daily Entry", "📊 Weekly Bill", "🧱 Materials", "📓 My Diary"]
+if st.session_state["role"] == "admin":
+    tabs += ["📈 Dashboard", "🧾 Client Invoice", "🔍 Site Logs", "📍 Sites", "👷 Contractors", "👥 Users", "📂 Archive & Recovery", "🔎 Search Results"]
 
 if "current_tab" not in st.session_state or st.session_state["current_tab"] not in tabs:
-    st.session_state["current_tab"] = tabs[0]
+    # If we have a restored tab from cookie (post background-switch reload), use it
+    restored = st.session_state.pop("_restored_tab", None)
+    if restored and restored in tabs:
+        st.session_state["current_tab"] = restored
+    else:
+        st.session_state["current_tab"] = tabs[0]
 
 with st.sidebar:
     st.markdown("""
@@ -838,7 +857,7 @@ with st.sidebar:
         </div>
     """, unsafe_allow_html=True)
 
-    role_badge = "🛡️ Admin" if is_admin else ("🎨 Interior Designer" if is_designer else "👷 Field User")
+    role_badge = "🛡️ Admin" if st.session_state["role"] == "admin" else "👷 Field User"
     user_name = st.session_state.get("user_name", "User")
     st.markdown(f"""
         <div style='background:rgba(243,156,18,0.15); border:1px solid rgba(243,156,18,0.3);
@@ -849,7 +868,7 @@ with st.sidebar:
     """, unsafe_allow_html=True)
 
     # --- GLOBAL SEARCH (admin only) ---
-    if is_admin:
+    if st.session_state["role"] == "admin":
         st.markdown("<div style='font-size:0.72rem; color:#6B7280; font-weight:600; text-transform:uppercase; letter-spacing:0.1em; margin-bottom:0.4rem;'>QUICK SEARCH</div>", unsafe_allow_html=True)
         search_input = st.text_input(
             "search_box",
@@ -882,12 +901,20 @@ with st.sidebar:
             continue
         if st.button(tab, key=f"nav_{tab}", use_container_width=True):
             st.session_state["current_tab"] = tab
+            cookie_manager.set("active_tab", tab, expires_at=datetime.now() + timedelta(days=30))
             st.rerun()
+
+    # Keep active_tab cookie in sync, but only when it has changed
+    # (writing on every render causes a re-render loop on heavy pages like Weekly Bill)
+    _cur = st.session_state.get("current_tab", tabs[0])
+    if st.session_state.get("_last_saved_tab") != _cur:
+        cookie_manager.set("active_tab", _cur, expires_at=datetime.now() + timedelta(days=30))
+        st.session_state["_last_saved_tab"] = _cur
 
     st.divider()
 
-    # PIN change for regular users and designers
-    if st.session_state["role"] in ("user", "designer"):
+    # PIN change for regular users
+    if st.session_state["role"] == "user":
         with st.expander("🔐 Change My PIN"):
             st.caption("Choose a new 4-digit numeric PIN for your next login.")
             new_pin = st.text_input("New 4-Digit PIN", max_chars=4, type="password", key="new_u_pin", placeholder="e.g. 5678")
@@ -908,10 +935,11 @@ with st.sidebar:
                 supabase.table("users").update({"session_token": None}).eq("phone", st.session_state["phone"]).execute()
             except:
                 pass
-        try:
-            cookie_manager.delete("auth_token")
-        except KeyError:
-            pass
+        for _ck in ["auth_token", "active_tab", "last_site", "last_contractor"]:
+            try:
+                cookie_manager.delete(_ck)
+            except KeyError:
+                pass
         st.session_state.clear()
         time.sleep(1)
         st.rerun()
@@ -957,10 +985,17 @@ if current_tab == "📝 Daily Entry":
             st.stop()
 
         # Step 1: Select Site, Date, Contractor
+        # Restore last-used selections from cookies so a background-switch reload
+        # doesn't wipe what the user had selected
+        _saved_site = cookie_manager.get("last_site")
+        _saved_con  = cookie_manager.get("last_contractor")
+
         st.markdown("""<div class='step-card'><div class='step-label'>Step 1 — Choose Entry Details</div></div>""", unsafe_allow_html=True)
         c1, c2, c3 = st.columns(3)
         dt = c1.date_input("📅 Date", date.today(), format="DD-MM-YYYY", help="Select the date for this work entry.")
-        st_sel = c2.selectbox("🏗️ Site", av_sites, index=None, placeholder="Select a site...", help="Choose the construction site.")
+
+        _site_idx = av_sites.index(_saved_site) if _saved_site and _saved_site in av_sites else None
+        st_sel = c2.selectbox("🏗️ Site", av_sites, index=_site_idx, placeholder="Select a site...", help="Choose the construction site.")
 
         con_sel_options = []
         if not df_con.empty:
@@ -970,7 +1005,14 @@ if current_tab == "📝 Daily Entry":
             else:
                 con_sel_options = df_con["name"].unique().tolist()
 
-        con_sel = c3.selectbox("👷 Contractor", con_sel_options, index=None, placeholder="Select a contractor...", help="Choose the contractor whose workers you are logging.")
+        _con_idx = con_sel_options.index(_saved_con) if _saved_con and _saved_con in con_sel_options else None
+        con_sel = c3.selectbox("👷 Contractor", con_sel_options, index=_con_idx, placeholder="Select a contractor...", help="Choose the contractor whose workers you are logging.")
+
+        # Persist selections to cookies only when value actually changes
+        if st_sel and st_sel != _saved_site:
+            cookie_manager.set("last_site", st_sel, expires_at=datetime.now() + timedelta(days=7))
+        if con_sel and con_sel != _saved_con:
+            cookie_manager.set("last_contractor", con_sel, expires_at=datetime.now() + timedelta(days=7))
 
         if not st_sel or not con_sel:
             st.info("👆 Please select a **Site** and **Contractor** above to continue.")
@@ -998,6 +1040,9 @@ if current_tab == "📝 Daily Entry":
             is_nil_default = bool(exist and exist.get("count_mason") == 0 and exist.get("count_helper") == 0 and exist.get("count_ladies") == 0)
             is_nil = st.checkbox("⛔ Mark as Holiday / No Work (Nil Entry)", value=is_nil_default,
                                  help="Check this if no workers were present today. A nil entry will be recorded.")
+
+            # Declare defaults so Save button never hits NameError regardless of branch
+            nm, nh, nl, cost, wdesc, uploaded_photo = 0, 0, 0, 0, "", None
 
             if is_nil:
                 default_desc = "No Work / Holiday"
@@ -1140,118 +1185,117 @@ elif current_tab == "🧱 Materials":
             if "All" not in assigned_raw and "None/All" not in assigned_raw:
                 assigned_list = [s.strip() for s in assigned_raw.split(",")]
                 av_sites = [s for s in av_sites if s in assigned_list]
-            if not av_sites:
-                empty_state("🔗", "No sites assigned", "You are not assigned to any active site. Contact your admin.")
-                st.stop()
 
-        sel_site = st.selectbox("📍 Select Site", av_sites, help="Choose the site whose material log you want to view or update.")
-        st.divider()
-
-        if sel_site:
-            try:
-                raw_materials = supabase.table("materials").select("*").eq("site", sel_site).execute()
-                df_mat = pd.DataFrame(raw_materials.data) if raw_materials.data else pd.DataFrame()
-            except Exception:
-                df_mat = pd.DataFrame()
-                st.error("⚠️ Error fetching materials data. Check your connection.")
-
-            sel_week = "All Time"
-            weeks = []
-
-            if not df_mat.empty:
-                df_mat["date_dt"] = pd.to_datetime(df_mat["date"], errors='coerce')
-                df_mat = df_mat.dropna(subset=["date_dt"])
-                if not df_mat.empty:
-                    df_mat["start_date"] = df_mat["date_dt"].dt.date.apply(get_billing_start_date)
-                    df_mat["end_date"] = df_mat["start_date"] + timedelta(days=6)
-                    df_mat["week_label"] = df_mat.apply(lambda x: f"{x['start_date'].strftime('%d-%m-%Y')} to {x['end_date'].strftime('%d-%m-%Y')}", axis=1)
-                    unique_weeks = df_mat[["start_date", "week_label"]].drop_duplicates().sort_values("start_date", ascending=False)
-                    weeks = unique_weeks["week_label"].tolist()
-
-            st.markdown("### 📅 Filter by Time Period")
-            sel_week = st.selectbox("View Period", ["All Time"] + weeks,
-                                    help="Filter the material view and PDF report to a specific week, or view everything.")
-
-            if sel_week != "All Time" and not df_mat.empty:
-                df_mat_filtered = df_mat[df_mat["week_label"] == sel_week].copy()
-            else:
-                df_mat_filtered = df_mat.copy()
-
-            if not df_mat_filtered.empty:
-                try:
-                    pdf_bytes = generate_material_pdf_bytes(sel_site, sel_week, df_mat_filtered)
-                    st.download_button(
-                        label="⬇️ Download Material Report (PDF)",
-                        data=pdf_bytes,
-                        file_name=f"Materials_{sel_site}_{sel_week.replace(' ', '_')}.pdf",
-                        mime="application/pdf",
-                        type="primary",
-                        help="Download a formatted PDF report of all materials for this site and time period."
-                    )
-                except Exception as e:
-                    st.error(f"⚠️ Error generating PDF: {e}")
-            else:
-                st.info("ℹ️ No records in this period — no PDF to generate yet.")
-
+        if not av_sites:
+            empty_state("🔗", "No sites assigned", "You are not assigned to any active site. Contact your admin.")
+        else:
+            sel_site = st.selectbox("📍 Select Site", av_sites, help="Choose the site whose material log you want to view or update.")
             st.divider()
+            if sel_site:
+                try:
+                    raw_materials = supabase.table("materials").select("*").eq("site", sel_site).execute()
+                    df_mat = pd.DataFrame(raw_materials.data) if raw_materials.data else pd.DataFrame()
+                except Exception:
+                    df_mat = pd.DataFrame()
+                    st.error("⚠️ Error fetching materials data. Check your connection.")
 
-            categories = ["Civil Material", "Steel Material", "Soil Material", "RMC"]
-            mat_tabs = st.tabs(categories)
+                sel_week = "All Time"
+                weeks = []
 
-            for i, cat in enumerate(categories):
-                with mat_tabs[i]:
-                    st.markdown(f"### ➕ Log New {cat} Entry")
-                    st.caption(f"Fill in the details below to log a new {cat} purchase for **{sel_site}**.")
-                    with st.form(f"form_{cat}"):
-                        c1, c2, c3 = st.columns(3)
-                        m_date = c1.date_input("📅 Purchase Date", date.today(), format="DD-MM-YYYY", key=f"d_{cat}")
-                        m_vendor = c2.text_input("🏪 Vendor Name", key=f"v_{cat}", placeholder="e.g. ABC Suppliers")
-                        m_material = c3.text_input("📦 Material Description", key=f"m_{cat}", placeholder="e.g. Cement (50kg bags)")
-                        c4, c5 = st.columns(2)
-                        m_qty = c4.number_input("📏 Quantity", min_value=0.0, step=1.0, key=f"q_{cat}", help="Number of units purchased.")
-                        m_amt = c5.number_input("💰 Total Amount (₹)", min_value=0.0, step=100.0, key=f"a_{cat}", help="Total purchase amount in Rupees.")
-                        m_receipt = st.file_uploader("🧾 Attach Bill/Receipt (Optional)", type=["jpg", "jpeg", "png"], key=f"rec_{cat}",
-                                                     help="Upload a photo of the bill or receipt for documentation.")
+                if not df_mat.empty:
+                    df_mat["date_dt"] = pd.to_datetime(df_mat["date"], errors='coerce')
+                    df_mat = df_mat.dropna(subset=["date_dt"])
+                    if not df_mat.empty:
+                        df_mat["start_date"] = df_mat["date_dt"].dt.date.apply(get_billing_start_date)
+                        df_mat["end_date"] = df_mat["start_date"] + timedelta(days=6)
+                        df_mat["week_label"] = df_mat.apply(lambda x: f"{x['start_date'].strftime('%d-%m-%Y')} to {x['end_date'].strftime('%d-%m-%Y')}", axis=1)
+                        unique_weeks = df_mat[["start_date", "week_label"]].drop_duplicates().sort_values("start_date", ascending=False)
+                        weeks = unique_weeks["week_label"].tolist()
 
-                        if st.form_submit_button("💾 Save Material Entry", type="primary", use_container_width=True):
-                            if not m_vendor.strip():
-                                st.error("⚠️ Vendor name is required.")
-                            elif not m_material.strip():
-                                st.error("⚠️ Material description is required.")
+                st.markdown("### 📅 Filter by Time Period")
+                sel_week = st.selectbox("View Period", ["All Time"] + weeks,
+                                        help="Filter the material view and PDF report to a specific week, or view everything.")
+
+                if sel_week != "All Time" and not df_mat.empty:
+                    df_mat_filtered = df_mat[df_mat["week_label"] == sel_week].copy()
+                else:
+                    df_mat_filtered = df_mat.copy()
+
+                if not df_mat_filtered.empty:
+                    try:
+                        pdf_bytes = generate_material_pdf_bytes(sel_site, sel_week, df_mat_filtered)
+                        st.download_button(
+                            label="⬇️ Download Material Report (PDF)",
+                            data=pdf_bytes,
+                            file_name=f"Materials_{sel_site}_{sel_week.replace(' ', '_')}.pdf",
+                            mime="application/pdf",
+                            type="primary",
+                            help="Download a formatted PDF report of all materials for this site and time period."
+                        )
+                    except Exception as e:
+                        st.error(f"⚠️ Error generating PDF: {e}")
+                else:
+                    st.info("ℹ️ No records in this period — no PDF to generate yet.")
+
+                st.divider()
+
+                categories = ["Civil Material", "Steel Material", "Soil Material", "RMC"]
+                mat_tabs = st.tabs(categories)
+
+                for i, cat in enumerate(categories):
+                    with mat_tabs[i]:
+                        st.markdown(f"### ➕ Log New {cat} Entry")
+                        st.caption(f"Fill in the details below to log a new {cat} purchase for **{sel_site}**.")
+                        with st.form(f"form_{cat}"):
+                            c1, c2, c3 = st.columns(3)
+                            m_date = c1.date_input("📅 Purchase Date", date.today(), format="DD-MM-YYYY", key=f"d_{cat}")
+                            m_vendor = c2.text_input("🏪 Vendor Name", key=f"v_{cat}", placeholder="e.g. ABC Suppliers")
+                            m_material = c3.text_input("📦 Material Description", key=f"m_{cat}", placeholder="e.g. Cement (50kg bags)")
+                            c4, c5 = st.columns(2)
+                            m_qty = c4.number_input("📏 Quantity", min_value=0.0, step=1.0, key=f"q_{cat}", help="Number of units purchased.")
+                            m_amt = c5.number_input("💰 Total Amount (₹)", min_value=0.0, step=100.0, key=f"a_{cat}", help="Total purchase amount in Rupees.")
+                            m_receipt = st.file_uploader("🧾 Attach Bill/Receipt (Optional)", type=["jpg", "jpeg", "png"], key=f"rec_{cat}",
+                                                         help="Upload a photo of the bill or receipt for documentation.")
+
+                            if st.form_submit_button("💾 Save Material Entry", type="primary", use_container_width=True):
+                                if not m_vendor.strip():
+                                    st.error("⚠️ Vendor name is required.")
+                                elif not m_material.strip():
+                                    st.error("⚠️ Material description is required.")
+                                else:
+                                    receipt_link = ""
+                                    if m_receipt:
+                                        with st.spinner("Uploading receipt..."):
+                                            receipt_link = upload_evidence(m_receipt)
+                                    load = {
+                                        "date": str(m_date), "site": sel_site, "category": cat,
+                                        "vendor": m_vendor.strip(), "material_name": m_material.strip(),
+                                        "quantity": m_qty, "amount": m_amt, "receipt_url": receipt_link
+                                    }
+                                    try:
+                                        supabase.table("materials").insert(load).execute()
+                                        st.success(f"✅ {cat} entry saved successfully!")
+                                        time.sleep(1)
+                                        st.rerun()
+                                    except Exception:
+                                        st.error("⚠️ Failed to save. Check your database connection.")
+
+                        st.markdown("---")
+                        st.markdown(f"### 📋 {cat} Log — {sel_week}")
+                        if not df_mat_filtered.empty:
+                            df_cat = df_mat_filtered[df_mat_filtered["category"] == cat].copy()
+                            if not df_cat.empty:
+                                df_cat = df_cat.sort_values("date_dt", ascending=False)
+                                total_spent = df_cat["amount"].sum()
+                                st.metric(f"Total Spent on {cat}", f"₹{total_spent:,.2f}")
+                                display_df = df_cat[["date", "vendor", "material_name", "quantity", "amount"]].rename(
+                                    columns={"date": "Date", "vendor": "Vendor", "material_name": "Material", "quantity": "Qty", "amount": "Amount (₹)"}
+                                )
+                                st.dataframe(display_df, use_container_width=True, hide_index=True)
                             else:
-                                receipt_link = ""
-                                if m_receipt:
-                                    with st.spinner("Uploading receipt..."):
-                                        receipt_link = upload_evidence(m_receipt)
-                                load = {
-                                    "date": str(m_date), "site": sel_site, "category": cat,
-                                    "vendor": m_vendor.strip(), "material_name": m_material.strip(),
-                                    "quantity": m_qty, "amount": m_amt, "receipt_url": receipt_link
-                                }
-                                try:
-                                    supabase.table("materials").insert(load).execute()
-                                    st.success(f"✅ {cat} entry saved successfully!")
-                                    time.sleep(1)
-                                    st.rerun()
-                                except Exception:
-                                    st.error("⚠️ Failed to save. Check your database connection.")
-
-                    st.markdown("---")
-                    st.markdown(f"### 📋 {cat} Log — {sel_week}")
-                    if not df_mat_filtered.empty:
-                        df_cat = df_mat_filtered[df_mat_filtered["category"] == cat].copy()
-                        if not df_cat.empty:
-                            df_cat = df_cat.sort_values("date_dt", ascending=False)
-                            total_spent = df_cat["amount"].sum()
-                            st.metric(f"Total Spent on {cat}", f"₹{total_spent:,.2f}")
-                            display_df = df_cat[["date", "vendor", "material_name", "quantity", "amount"]].rename(
-                                columns={"date": "Date", "vendor": "Vendor", "material_name": "Material", "quantity": "Qty", "amount": "Amount (₹)"}
-                            )
-                            st.dataframe(display_df, use_container_width=True, hide_index=True)
+                                empty_state("📦", f"No {cat} logged", f"Log a new {cat} entry using the form above.")
                         else:
-                            empty_state("📦", f"No {cat} logged", f"Log a new {cat} entry using the form above.")
-                    else:
-                        empty_state("📦", "No materials logged yet", f"Use the form above to add your first {cat} entry for {sel_site}.")
+                            empty_state("📦", "No materials logged yet", f"Use the form above to add your first {cat} entry for {sel_site}.")
 
 # ==============================================================================
 # TAB 4: MY DIARY
@@ -1376,8 +1420,7 @@ elif current_tab == "📈 Dashboard":
             empty_state("🧱", "No materials logged", "No material entries found in this date range.")
 
 elif current_tab == "🧾 Client Invoice":
-    page_header("🧾 Client Invoice", "Bill your client for civil pre-work labour + materials procured on their behalf")
-
+    page_header("🧾 Client Invoice", "Generate a professional expense report to send to your client")
     df_sites = fetch_data("sites")
     if df_sites.empty:
         empty_state("🏗️", "No sites available", "Add sites first before generating invoices.")
@@ -1389,570 +1432,161 @@ elif current_tab == "🧾 Client Invoice":
             st.error("⚠️ Database Setup Required: The 'is_client_site' column is missing from your 'sites' table in Supabase. Please add it as a boolean column.")
 
         if not client_sites:
-            st.info("💡 No sites are marked for client billing. Go to **Supabase → Table Editor → sites** and tick **is_client_site** for the relevant sites.")
+            st.info("💡 No sites are marked for client billing. To fix this, go to **Supabase → Table Editor → sites** and tick the **is_client_site** checkbox for the sites you want to invoice.")
         else:
-            # ── STEP 1: Site & Date Range ──────────────────────────────────────────
             st.markdown("### Step 1 — Select Site & Date Range")
             c1, c2, c3 = st.columns(3)
-            inv_site  = c1.selectbox("🏗️ Project Site", client_sites, help="Only sites marked for client billing appear here.")
+            inv_site = c1.selectbox("🏗️ Project Site", client_sites, help="Only sites marked for client billing appear here.")
             inv_start = c2.date_input("📅 From", date.today() - timedelta(days=6), format="DD-MM-YYYY")
-            inv_end   = c3.date_input("📅 To",   date.today(),                      format="DD-MM-YYYY")
+            inv_end = c3.date_input("📅 To", date.today(), format="DD-MM-YYYY")
 
             st.divider()
 
-            # ── STEP 2: Civil / Pre-work Labour — Weekly Breakdown ─────────────────
-            st.markdown("### Step 2 — Civil & Pre-Work Labour")
-            st.caption(
-                "Labour done before interior work (e.g. wall demolition, civil changes) — "
-                "NOT in your interior quote. The entries are grouped week-by-week (Saturday to Friday). "
-                "Set the rate you want to charge the client per shift."
-            )
-
-            # Pull logged shifts for this site & period
+            st.markdown("### Step 2 — Labour Billing")
+            st.caption("Your actual (internal) labour cost is shown below. Enter the rates you want to charge your client to apply a margin.")
             df_entries = fetch_data("entries")
-            df_e_site = pd.DataFrame()
+            tot_mason, tot_helper, tot_ladies = 0, 0, 0
+            internal_total_labor = 0
 
             if not df_entries.empty:
                 df_entries["date_dt"] = pd.to_datetime(df_entries["date"]).dt.date
-                mask_e = (df_entries["site"] == inv_site) & \
-                         (df_entries["date_dt"] >= inv_start) & \
-                         (df_entries["date_dt"] <= inv_end)
-                df_e_site = df_entries[mask_e].copy()
+                mask = (df_entries["site"] == inv_site) & (df_entries["date_dt"] >= inv_start) & (df_entries["date_dt"] <= inv_end)
+                df_e_filtered = df_entries[mask]
+                if not df_e_filtered.empty:
+                    tot_mason = df_e_filtered["count_mason"].sum()
+                    tot_helper = df_e_filtered["count_helper"].sum()
+                    tot_ladies = df_e_filtered["count_ladies"].sum()
+                    internal_total_labor = df_e_filtered["total_cost"].sum()
 
-            # Build week buckets (Sat–Fri) covering the selected range
-            def get_week_start(d):
-                # Saturday = weekday 5
-                days_since_sat = (d.weekday() + 2) % 7
-                return d - timedelta(days=days_since_sat)
+            st.info(f"💡 **Your internal labour payout** for this period: **₹{internal_total_labor:,.0f}**  |  Enter your client billing rates below to set what you'll charge the client.")
 
-            # Collect all unique week starts that appear in the data
-            week_starts = set()
-            if not df_e_site.empty:
-                for d in df_e_site["date_dt"]:
-                    week_starts.add(get_week_start(d))
-            # Also cover the selected range even if no entries some weeks
-            cur = get_week_start(inv_start)
-            while cur <= inv_end:
-                week_starts.add(cur)
-                cur += timedelta(days=7)
-            week_starts = sorted(week_starts)
+            c_l1, c_l2, c_l3 = st.columns(3)
+            client_rate_mason = c_l1.number_input(f"Client Rate — Mason ({int(tot_mason)} shifts)", value=0.0, step=50.0, help="Rate per shift you're billing the client.")
+            client_rate_helper = c_l2.number_input(f"Client Rate — Helper ({int(tot_helper)} shifts)", value=0.0, step=50.0)
+            client_rate_ladies = c_l3.number_input(f"Client Rate — Ladies ({int(tot_ladies)} shifts)", value=0.0, step=50.0)
 
-            # Summary reference info box
-            if not df_e_site.empty:
-                tot_m_all = df_e_site["count_mason"].sum()
-                tot_h_all = df_e_site["count_helper"].sum()
-                tot_l_all = df_e_site["count_ladies"].sum()
-                tot_cost_all = df_e_site["total_cost"].sum()
-                st.info(
-                    f"📊 Logged entries this period — "
-                    f"Masons: **{tot_m_all:.0f}**, Helpers: **{tot_h_all:.0f}**, Ladies: **{tot_l_all:.0f}** "
-                    f"| Internal payout: **Rs. {tot_cost_all:,.0f}**"
-                )
-            else:
-                st.info("ℹ️ No labour entries logged for this site in the selected period.")
-
-            # Client billing rates (charged to client, can differ from internal rates)
-            st.markdown("**Set client billing rates (per shift):**")
-            c_r1, c_r2, c_r3 = st.columns(3)
-            client_rate_mason  = c_r1.number_input("Rate/shift — Mason (Rs)",  min_value=0.0, value=0.0, step=50.0, key="cr_m")
-            client_rate_helper = c_r2.number_input("Rate/shift — Helper (Rs)", min_value=0.0, value=0.0, step=50.0, key="cr_h")
-            client_rate_ladies = c_r3.number_input("Rate/shift — Ladies (Rs)", min_value=0.0, value=0.0, step=50.0, key="cr_l")
-
-            # Build weekly rows for display and PDF
-            weekly_labour_rows = []
-            for ws in week_starts:
-                we = ws + timedelta(days=6)
-                # Filter entries in this week
-                if not df_e_site.empty:
-                    mask_w = (df_e_site["date_dt"] >= ws) & (df_e_site["date_dt"] <= we)
-                    df_week = df_e_site[mask_w]
-                    wm = float(df_week["count_mason"].sum())
-                    wh = float(df_week["count_helper"].sum())
-                    wl = float(df_week["count_ladies"].sum())
-                else:
-                    wm = wh = wl = 0.0
-                wamt = (wm * client_rate_mason) + (wh * client_rate_helper) + (wl * client_rate_ladies)
-                weekly_labour_rows.append({
-                    "week":    f"{ws.strftime('%d-%m-%Y')} to {we.strftime('%d-%m-%Y')}",
-                    "mason":   wm, "helper": wh, "ladies": wl,
-                    "rate_m":  client_rate_mason,
-                    "rate_h":  client_rate_helper,
-                    "rate_l":  client_rate_ladies,
-                    "amount":  wamt
-                })
-
-            # Show weekly breakdown table in UI (admin sees full detail including worker counts)
-            if weekly_labour_rows:
-                st.markdown("**Weekly breakdown (your view — worker counts hidden in client PDF):**")
-                display_rows = []
-                for wr in weekly_labour_rows:
-                    display_rows.append({
-                        "Week": wr["week"],
-                        "Mason": f"{wr['mason']:.1f}" if wr['mason'] else "-",
-                        "Helper": f"{wr['helper']:.1f}" if wr['helper'] else "-",
-                        "Ladies": f"{wr['ladies']:.1f}" if wr['ladies'] else "-",
-                        "Amount (Rs)": f"{wr['amount']:,.2f}"
-                    })
-                st.dataframe(pd.DataFrame(display_rows), use_container_width=True, hide_index=True)
-                st.caption("🔒 The client PDF shows only the week period and amount — worker shift counts and rates are not included.")
-
-            total_labor = sum(r["amount"] for r in weekly_labour_rows)
-            tot_mason   = sum(r["mason"]  for r in weekly_labour_rows)
-            tot_helper  = sum(r["helper"] for r in weekly_labour_rows)
-            tot_ladies  = sum(r["ladies"] for r in weekly_labour_rows)
-
-            st.metric("Total Labour to Recover from Client", f"Rs. {total_labor:,.2f}")
+            total_labor = (tot_mason * client_rate_mason) + (tot_helper * client_rate_helper) + (tot_ladies * client_rate_ladies)
+            margin = total_labor - internal_total_labor
+            st.metric(f"Total Billed Labour — {inv_site}", f"₹{total_labor:,.2f}",
+                      delta=f"₹{margin:,.0f} margin" if total_labor > 0 else None,
+                      help="This is what you will bill the client for labour.")
 
             labor_details = {
-                'm_count': tot_mason,   'm_rate': client_rate_mason,
-                'h_count': tot_helper,  'h_rate': client_rate_helper,
-                'l_count': tot_ladies,  'l_rate': client_rate_ladies,
-                'total':   total_labor
+                'm_count': tot_mason, 'm_rate': client_rate_mason,
+                'h_count': tot_helper, 'h_rate': client_rate_helper,
+                'l_count': tot_ladies, 'l_rate': client_rate_ladies,
+                'total': total_labor
             }
 
             st.divider()
-
-            # ── STEP 3: Materials — two buckets ────────────────────────────────────
             st.markdown("### Step 3 — Materials")
-            st.markdown("""
-            <div style='background:#EEF9FF; border-left:4px solid #2980B9; border-radius:8px; padding:0.8rem 1.2rem; margin-bottom:1rem;'>
-            <b>How this works:</b><br>
-            Use <b>🔴 Client-Procured</b> for materials the client purchased but billed to your name (e.g. A/C unit, tiles) — 
-            you paid the vendor from your account and need to recover this amount from the client.<br><br>
-            Use <b>🟢 Our Scope</b> for materials that are already included in your project quote — 
-            these appear in the PDF as "Included in Quote" with <b>no charge</b>.
-            </div>
-            """, unsafe_allow_html=True)
+            st.caption(f"Showing materials from the database for **{inv_site}** between **{inv_start.strftime('%d %b %Y')}** and **{inv_end.strftime('%d %b %Y')}**.")
 
-            # Fetch all materials for this site & period
             df_materials = fetch_data("materials")
+            pdf_mats = pd.DataFrame(columns=["Date", "Description", "Amount (Rs)"])
+            total_mat = 0
             df_m_filtered = pd.DataFrame()
 
             if not df_materials.empty:
                 df_materials["date_dt"] = pd.to_datetime(df_materials["date"]).dt.date
-                mask_m = (df_materials["site"] == inv_site) & \
-                         (df_materials["date_dt"] >= inv_start) & \
-                         (df_materials["date_dt"] <= inv_end)
+                mask_m = (df_materials["site"] == inv_site) & (df_materials["date_dt"] >= inv_start) & (df_materials["date_dt"] <= inv_end)
                 df_m_filtered = df_materials[mask_m].copy()
                 if not df_m_filtered.empty:
                     df_m_filtered["formatted_date"] = pd.to_datetime(df_m_filtered["date"]).dt.strftime('%d-%m-%Y')
+                    df_m_filtered["Description_PDF"] = df_m_filtered["material_name"] + " (" + df_m_filtered["category"] + ")"
+                    pdf_mats = df_m_filtered[["formatted_date", "Description_PDF", "amount"]].rename(
+                        columns={"formatted_date": "Date", "Description_PDF": "Description", "amount": "Amount (Rs)"})
+                    total_mat = pdf_mats["Amount (Rs)"].sum()
 
-            # Split by invoice_scope column (if it exists), otherwise default all to client
-            CLIENT_SCOPE = "Client-Procured"
-            OUR_SCOPE    = "Our Scope"
-
-            has_scope_col = not df_m_filtered.empty and "invoice_scope" in df_m_filtered.columns
-
-            if has_scope_col:
-                df_client_scope = df_m_filtered[df_m_filtered["invoice_scope"] == CLIENT_SCOPE].copy()
-                df_our_scope    = df_m_filtered[df_m_filtered["invoice_scope"] == OUR_SCOPE].copy()
+            if not pdf_mats.empty:
+                st.dataframe(pdf_mats, use_container_width=True, hide_index=True)
             else:
-                # If no scope column yet, treat everything as client-procured by default
-                df_client_scope = df_m_filtered.copy()
-                df_our_scope    = pd.DataFrame()
+                st.info("ℹ️ No materials found in the database for this date range. You can add them below.")
 
-            # ── 3a: Client-Procured Materials ────────────────────────────────────
-            mat_tab_client, mat_tab_ours = st.tabs(["🔴 Client-Procured Materials (To Recover)", "🟢 Our Scope Materials (Included in Quote)"])
+            st.metric("Total Material Cost", f"₹{total_mat:,.2f}")
 
-            with mat_tab_client:
-                st.caption("Items purchased/billed in your name at the client's request — you paid, now recover.")
+            st.markdown("#### ⚙️ Manage Materials for This Invoice")
+            st.caption("Use these tabs to add, edit, or remove materials before generating the PDF.")
+            tab_add, tab_edit, tab_del = st.tabs(["➕ Add Material", "✏️ Edit Material", "🗑️ Delete Material"])
 
-                if not df_client_scope.empty:
-                    df_show_c = df_client_scope[["formatted_date", "vendor", "material_name", "amount"]].rename(
-                        columns={"formatted_date": "Date", "vendor": "Vendor", "material_name": "Description", "amount": "Amount (₹)"}
-                    )
-                    st.dataframe(df_show_c, use_container_width=True, hide_index=True)
-                    total_client_mat = df_client_scope["amount"].sum()
-                    st.metric("Total to Recover — Client Materials", f"₹{total_client_mat:,.2f}")
-                else:
-                    st.info("ℹ️ No client-procured materials logged for this period. Add them below.")
-                    total_client_mat = 0
-
-                st.markdown("#### ➕ Add Client-Procured Material")
-                with st.form("add_client_mat"):
-                    cc1, cc2 = st.columns([1, 2])
-                    cm_date   = cc1.date_input("Date", inv_end, format="DD-MM-YYYY")
-                    cm_vendor = cc2.text_input("Vendor / Supplier Name", placeholder="e.g. Samsung, XYZ Tiles")
-                    cc3, cc4 = st.columns([3, 1])
-                    cm_desc   = cc3.text_input("Description", placeholder="e.g. Split A/C 1.5 Ton (billed to our name)")
-                    cm_amt    = cc4.number_input("Amount (₹)", min_value=0.0, step=100.0)
-                    if st.form_submit_button("💾 Save Client Material", type="primary"):
-                        if cm_desc.strip() and cm_vendor.strip():
-                            scope_val = CLIENT_SCOPE if has_scope_col else None
+            with tab_add:
+                with st.form("quick_add_mat_v2"):
+                    c_qm1, c_qm2 = st.columns([1, 2])
+                    qm_date = c_qm1.date_input("Date of Purchase", inv_end, format="DD-MM-YYYY")
+                    qm_desc = c_qm2.text_input("Material Description", placeholder="e.g. Cement (50 Bags)")
+                    c_qm3, c_qm4 = st.columns(2)
+                    qm_cat = c_qm3.selectbox("Category", ["Civil", "Bill", "Transportation"])
+                    qm_amt = c_qm4.number_input("Amount (₹)", min_value=0.0, step=100.0)
+                    if st.form_submit_button("💾 Save to Database", type="primary"):
+                        if qm_desc.strip():
                             load = {
-                                "date": str(cm_date), "site": inv_site, "category": "Bill",
-                                "vendor": cm_vendor.strip(), "material_name": cm_desc.strip(),
-                                "quantity": 1, "amount": cm_amt, "receipt_url": ""
+                                "date": str(qm_date), "site": inv_site, "category": qm_cat,
+                                "vendor": "Client Invoice", "material_name": qm_desc.strip(),
+                                "quantity": 1, "amount": qm_amt, "receipt_url": ""
                             }
-                            if has_scope_col:
-                                load["invoice_scope"] = CLIENT_SCOPE
                             supabase.table("materials").insert(load).execute()
-                            st.success("✅ Client material saved!")
-                            time.sleep(1)
-                            st.rerun()
-                        else:
-                            st.error("⚠️ Please enter both a vendor name and a description.")
-
-                # Edit / Delete for client-scope materials
-                if not df_client_scope.empty:
-                    with st.expander("✏️ Edit or Delete a Client-Procured Entry"):
-                        edit_opts_c = {
-                            f"{row['formatted_date']} — {row['material_name']} — ₹{row['amount']}": row
-                            for _, row in df_client_scope.iterrows()
-                        }
-                        sel_c = st.selectbox("Select entry", list(edit_opts_c.keys()), key="sel_edit_c")
-                        row_c = edit_opts_c[sel_c]
-                        with st.form("edit_client_mat"):
-                            ec1, ec2 = st.columns([1, 2])
-                            ec_date   = ec1.date_input("Date", pd.to_datetime(row_c["date"]).date(), format="DD-MM-YYYY")
-                            ec_vendor = ec2.text_input("Vendor", value=str(row_c.get("vendor", "")))
-                            ec3, ec4  = st.columns([3, 1])
-                            ec_desc   = ec3.text_input("Description", value=str(row_c["material_name"]))
-                            ec_amt    = ec4.number_input("Amount (₹)", value=float(row_c["amount"]), step=100.0)
-                            col_upd, col_del = st.columns(2)
-                            if col_upd.form_submit_button("✅ Update"):
-                                upd = {"date": str(ec_date), "vendor": ec_vendor, "material_name": ec_desc, "amount": ec_amt}
-                                supabase.table("materials").update(upd).eq("id", int(row_c["id"])).execute()
-                                st.success("✅ Updated!")
-                                time.sleep(1)
-                                st.rerun()
-                            if col_del.form_submit_button("🗑️ Delete"):
-                                supabase.table("materials").delete().eq("id", int(row_c["id"])).execute()
-                                st.success("✅ Deleted.")
-                                time.sleep(1)
-                                st.rerun()
-
-            with mat_tab_ours:
-                st.caption("Materials covered by your project quote — they appear in the PDF as 'Included in Quote' with no additional charge to the client.")
-
-                if not df_our_scope.empty:
-                    df_show_o = df_our_scope[["formatted_date", "material_name", "amount"]].rename(
-                        columns={"formatted_date": "Date", "material_name": "Description", "amount": "Our Cost (₹)"}
-                    )
-                    df_show_o["Status"] = "✅ Included in Quote"
-                    st.dataframe(df_show_o, use_container_width=True, hide_index=True)
-                    st.caption(f"Our-scope total (internal reference only): ₹{df_our_scope['amount'].sum():,.2f} — not billed to client.")
-                else:
-                    st.info("ℹ️ No our-scope materials logged for this period. Add them below to document what is covered in your quote.")
-
-                st.markdown("#### ➕ Add Our-Scope Material")
-                with st.form("add_our_mat"):
-                    oc1, oc2 = st.columns([1, 2])
-                    om_date  = oc1.date_input("Date", inv_end, format="DD-MM-YYYY", key="om_date")
-                    om_desc  = oc2.text_input("Material Description", placeholder="e.g. Paint (included in quote)")
-                    oc3, oc4 = st.columns(2)
-                    om_cat   = oc3.selectbox("Category", ["Civil Material", "Steel Material", "Soil Material", "RMC", "Other"], key="om_cat")
-                    om_amt   = oc4.number_input("Our Cost (₹)", min_value=0.0, step=100.0, key="om_amt",
-                                                help="Your internal cost — this is NOT charged to the client.")
-                    if st.form_submit_button("💾 Save Our-Scope Material", type="primary"):
-                        if om_desc.strip():
-                            load = {
-                                "date": str(om_date), "site": inv_site, "category": om_cat,
-                                "vendor": "Our Scope", "material_name": om_desc.strip(),
-                                "quantity": 1, "amount": om_amt, "receipt_url": ""
-                            }
-                            if has_scope_col:
-                                load["invoice_scope"] = OUR_SCOPE
-                            supabase.table("materials").insert(load).execute()
-                            st.success("✅ Our-scope material saved!")
+                            st.success("✅ Saved! The invoice totals will update automatically.")
                             time.sleep(1)
                             st.rerun()
                         else:
                             st.error("⚠️ Please enter a material description.")
 
-                if not df_our_scope.empty:
-                    with st.expander("✏️ Edit or Delete an Our-Scope Entry"):
-                        edit_opts_o = {
-                            f"{row['formatted_date']} — {row['material_name']} — ₹{row['amount']}": row
-                            for _, row in df_our_scope.iterrows()
-                        }
-                        sel_o = st.selectbox("Select entry", list(edit_opts_o.keys()), key="sel_edit_o")
-                        row_o = edit_opts_o[sel_o]
-                        with st.form("edit_our_mat"):
-                            eo1, eo2 = st.columns([1, 2])
-                            eo_date  = eo1.date_input("Date", pd.to_datetime(row_o["date"]).date(), format="DD-MM-YYYY")
-                            eo_desc  = eo2.text_input("Description", value=str(row_o["material_name"]))
-                            eo_amt   = st.number_input("Our Cost (₹)", value=float(row_o["amount"]), step=100.0)
-                            eoc1, eoc2 = st.columns(2)
-                            if eoc1.form_submit_button("✅ Update"):
-                                supabase.table("materials").update({
-                                    "date": str(eo_date), "material_name": eo_desc, "amount": eo_amt
-                                }).eq("id", int(row_o["id"])).execute()
-                                st.success("✅ Updated!")
-                                time.sleep(1)
-                                st.rerun()
-                            if eoc2.form_submit_button("🗑️ Delete"):
-                                supabase.table("materials").delete().eq("id", int(row_o["id"])).execute()
-                                st.success("✅ Deleted.")
-                                time.sleep(1)
-                                st.rerun()
+            with tab_edit:
+                if not df_m_filtered.empty:
+                    edit_options = {f"{row['formatted_date']} — {row['material_name']} — ₹{row['amount']}": row for _, row in df_m_filtered.iterrows()}
+                    sel_edit_key = st.selectbox("Select entry to edit", list(edit_options.keys()))
+                    sel_edit_row = edit_options[sel_edit_key]
+                    with st.form("edit_mat_form"):
+                        c_e1, c_e2 = st.columns([1, 2])
+                        edit_date_obj = pd.to_datetime(sel_edit_row["date"]).date()
+                        e_date = c_e1.date_input("Date", edit_date_obj, format="DD-MM-YYYY")
+                        e_desc = c_e2.text_input("Description", value=sel_edit_row["material_name"])
+                        c_e3, c_e4 = st.columns(2)
+                        cat_options = ["Civil", "Bill", "Transportation"]
+                        existing_cat = sel_edit_row.get("category", "Civil")
+                        cat_idx = cat_options.index(existing_cat) if existing_cat in cat_options else 0
+                        e_cat = c_e3.selectbox("Category", cat_options, index=cat_idx)
+                        e_amt = c_e4.number_input("Amount (₹)", value=float(sel_edit_row["amount"]), step=100.0)
+                        if st.form_submit_button("✅ Update Material", type="primary"):
+                            supabase.table("materials").update({
+                                "date": str(e_date), "material_name": e_desc, "category": e_cat, "amount": e_amt
+                            }).eq("id", int(sel_edit_row["id"])).execute()
+                            st.success("✅ Material updated!")
+                            time.sleep(1)
+                            st.rerun()
+                else:
+                    st.info("ℹ️ No materials to edit in this date range. Add some using the ➕ tab.")
 
-            # ── Scope column hint ─────────────────────────────────────────────────
-            if not has_scope_col and not df_m_filtered.empty:
-                st.warning(
-                    "⚠️ **Tip:** Your `materials` table doesn't have an `invoice_scope` column yet. "
-                    "All existing materials are treated as Client-Procured for now. "
-                    "Add a text column named `invoice_scope` to Supabase to separate them properly going forward."
-                )
+            with tab_del:
+                if not df_m_filtered.empty:
+                    del_options = {f"{row['formatted_date']} — {row['material_name']} — ₹{row['amount']}": row['id'] for _, row in df_m_filtered.iterrows()}
+                    sel_del = st.selectbox("Select entry to delete", list(del_options.keys()))
+                    st.caption("⚠️ Deletion is immediate and cannot be undone.")
+                    if st.button("🗑️ Delete Selected Entry", type="primary"):
+                        del_id = del_options[sel_del]
+                        supabase.table("materials").delete().eq("id", int(del_id)).execute()
+                        st.success("✅ Entry deleted.")
+                        time.sleep(1)
+                        st.rerun()
+                else:
+                    st.info("ℹ️ No materials to delete in this date range.")
 
             st.divider()
+            grand_total = total_labor + total_mat
+            st.markdown(f"## 💰 Grand Total to Bill Client: ₹{grand_total:,.2f}")
+            st.caption("This is the sum of billed labour + all materials in the selected period.")
 
-            # ── STEP 4: Summary & PDF ──────────────────────────────────────────────
-            st.markdown("### Step 4 — Invoice Summary & PDF")
-
-            # Build PDF DataFrames
-            pdf_client_mats = pd.DataFrame(columns=["Date", "Vendor", "Description", "Amount (Rs)"])
-            pdf_our_mats    = pd.DataFrame(columns=["Date", "Description"])
-
-            if not df_client_scope.empty:
-                pdf_client_mats = df_client_scope[["formatted_date", "vendor", "material_name", "amount"]].rename(
-                    columns={"formatted_date": "Date", "vendor": "Vendor",
-                             "material_name": "Description", "amount": "Amount (Rs)"}
-                )
-            if not df_our_scope.empty:
-                pdf_our_mats = df_our_scope[["formatted_date", "material_name"]].rename(
-                    columns={"formatted_date": "Date", "material_name": "Description"}
-                )
-
-            total_client_mat = df_client_scope["amount"].sum() if not df_client_scope.empty else 0.0
-            grand_total = total_labor + total_client_mat
-
-            # Summary box
-            col_s1, col_s2, col_s3 = st.columns(3)
-            col_s1.metric("Civil Labour (to recover)", f"₹{total_labor:,.2f}")
-            col_s2.metric("Client Materials (to recover)", f"₹{total_client_mat:,.2f}")
-            col_s3.metric("💰 Grand Total to Recover", f"₹{grand_total:,.2f}")
-
-            st.caption("Grand Total = Civil/Pre-work Labour + Client-Procured Materials. Our-scope items are listed in the PDF but carry no charge.")
-
-            if st.button("📄 Generate Client Invoice PDF", type="primary", use_container_width=True):
+            if st.button("📄 Generate Professional Invoice PDF", type="primary", use_container_width=True):
                 date_label = f"{inv_start.strftime('%d-%m-%Y')} to {inv_end.strftime('%d-%m-%Y')}"
-                with st.spinner("Building your invoice..."):
-                    pdf_bytes = generate_client_invoice_bytes(
-                        inv_site, date_label, labor_details,
-                        pdf_client_mats, pdf_our_mats, grand_total,
-                        weekly_labour_rows=weekly_labour_rows
-                    )
-                st.success("✅ Invoice ready!")
+                with st.spinner("Generating your invoice PDF..."):
+                    pdf_bytes = generate_client_invoice_bytes(inv_site, date_label, labor_details, pdf_mats, grand_total)
+                st.success("✅ Invoice ready to download!")
                 st.download_button(
                     label="⬇️ Download Client Invoice (PDF)",
                     data=pdf_bytes,
-                    file_name=f"Client_Invoice_{inv_site}_{inv_start.strftime('%d%b%Y')}.pdf",
+                    file_name=f"Client_Invoice_{inv_site}_{inv_start.strftime('%d%b')}.pdf",
                     mime="application/pdf"
                 )
-
-elif current_tab == "🎨 Client Materials":
-    # ── DESIGNER-ONLY TAB ─────────────────────────────────────────────────────
-    # Interior designers can log and manage materials for client invoices.
-    # They see NO labour costs, no financial totals — only material entry.
-    if not is_designer and not is_admin:
-        st.error("⛔ You don't have access to this page.")
-        st.stop()
-
-    page_header("🎨 Client Materials", "Log and manage materials for client projects")
-
-    df_sites = fetch_data("sites")
-    # Designers see only their assigned sites
-    av_sites = df_sites["name"].tolist() if not df_sites.empty else []
-    if not is_admin:
-        assigned_raw = st.session_state.get("assigned_site", "")
-        if "All" not in assigned_raw and "None/All" not in assigned_raw and assigned_raw.strip():
-            assigned_list = [s.strip() for s in assigned_raw.split(",")]
-            av_sites = [s for s in av_sites if s in assigned_list]
-
-    if not av_sites:
-        empty_state("🏗️", "No sites assigned", "Ask your admin to assign you to a project site.")
-        st.stop()
-
-    inv_site = st.selectbox("🏗️ Select Project Site", av_sites)
-    c_d1, c_d2 = st.columns(2)
-    inv_start = c_d1.date_input("📅 From", date.today() - timedelta(days=30), format="DD-MM-YYYY")
-    inv_end   = c_d2.date_input("📅 To",   date.today(),                      format="DD-MM-YYYY")
-
-    st.divider()
-
-    # Fetch materials for this site & period
-    df_materials = fetch_data("materials")
-    df_m_filtered = pd.DataFrame()
-
-    if not df_materials.empty:
-        df_materials["date_dt"] = pd.to_datetime(df_materials["date"]).dt.date
-        mask_m = (df_materials["site"] == inv_site) & \
-                 (df_materials["date_dt"] >= inv_start) & \
-                 (df_materials["date_dt"] <= inv_end)
-        df_m_filtered = df_materials[mask_m].copy()
-        if not df_m_filtered.empty:
-            df_m_filtered["formatted_date"] = pd.to_datetime(df_m_filtered["date"]).dt.strftime('%d-%m-%Y')
-
-    CLIENT_SCOPE = "Client-Procured"
-    OUR_SCOPE    = "Our Scope"
-    has_scope_col = not df_m_filtered.empty and "invoice_scope" in df_m_filtered.columns
-
-    if has_scope_col:
-        df_client_scope = df_m_filtered[df_m_filtered["invoice_scope"] == CLIENT_SCOPE].copy()
-        df_our_scope    = df_m_filtered[df_m_filtered["invoice_scope"] == OUR_SCOPE].copy()
-    else:
-        df_client_scope = df_m_filtered.copy()
-        df_our_scope    = pd.DataFrame()
-
-    st.markdown("""
-    <div style='background:#EEF9FF; border-left:4px solid #2980B9; border-radius:8px; padding:0.8rem 1.2rem; margin-bottom:1rem;'>
-    <b>🔴 Client-Procured</b> — Items purchased/billed in the company's name at the client's request (e.g. A/C, tiles).
-    The company paid the vendor; the client owes this amount back.<br><br>
-    <b>🟢 Our Scope</b> — Materials already included in the project quote. No additional charge to the client.
-    </div>
-    """, unsafe_allow_html=True)
-
-    mat_tab_client, mat_tab_ours = st.tabs(["🔴 Client-Procured Materials", "🟢 Our Scope Materials"])
-
-    # ── CLIENT-PROCURED TAB ───────────────────────────────────────────────────
-    with mat_tab_client:
-        st.caption("Items the client selected but were billed to the company — needs to be recovered from client.")
-
-        if not df_client_scope.empty:
-            df_show_c = df_client_scope[["formatted_date", "vendor", "material_name"]].rename(
-                columns={"formatted_date": "Date", "vendor": "Vendor", "material_name": "Description"}
-            )
-            st.dataframe(df_show_c, use_container_width=True, hide_index=True)
-            st.caption(f"**{len(df_client_scope)} entries** in this period.")
-        else:
-            st.info("ℹ️ No client-procured materials logged yet. Add them below.")
-
-        st.markdown("#### ➕ Add Client-Procured Material")
-        with st.form("designer_add_client_mat"):
-            dc1, dc2 = st.columns([1, 2])
-            cm_date   = dc1.date_input("Date of Purchase", inv_end, format="DD-MM-YYYY")
-            cm_vendor = dc2.text_input("Vendor / Supplier", placeholder="e.g. Samsung, XYZ Tiles, Kohler")
-            dc3, dc4  = st.columns([3, 1])
-            cm_desc   = dc3.text_input("Description", placeholder="e.g. Split A/C 1.5 Ton, Vitrified Floor Tiles (600×600)")
-            cm_qty    = dc4.number_input("Quantity", min_value=0.0, step=1.0, value=1.0)
-            cm_amt    = st.number_input("Total Amount (₹)", min_value=0.0, step=100.0,
-                                        help="The amount the vendor charged — billed to company, to recover from client.")
-            cm_receipt = st.file_uploader("🧾 Attach Bill / Receipt (optional)", type=["jpg", "jpeg", "png"])
-
-            if st.form_submit_button("💾 Save", type="primary"):
-                if not cm_desc.strip():
-                    st.error("⚠️ Please enter a description.")
-                elif not cm_vendor.strip():
-                    st.error("⚠️ Please enter the vendor name.")
-                else:
-                    receipt_link = ""
-                    if cm_receipt:
-                        with st.spinner("Uploading receipt..."):
-                            receipt_link = upload_evidence(cm_receipt)
-                    load = {
-                        "date": str(cm_date), "site": inv_site, "category": "Bill",
-                        "vendor": cm_vendor.strip(), "material_name": cm_desc.strip(),
-                        "quantity": cm_qty, "amount": cm_amt, "receipt_url": receipt_link
-                    }
-                    if has_scope_col:
-                        load["invoice_scope"] = CLIENT_SCOPE
-                    try:
-                        supabase.table("materials").insert(load).execute()
-                        st.success("✅ Saved!")
-                        time.sleep(1)
-                        st.rerun()
-                    except Exception:
-                        st.error("⚠️ Failed to save. Check your connection.")
-
-        if not df_client_scope.empty:
-            with st.expander("✏️ Edit or Delete an Entry"):
-                edit_opts = {
-                    f"{row['formatted_date']} — {row['material_name']} ({row.get('vendor','')})": row
-                    for _, row in df_client_scope.iterrows()
-                }
-                sel_key = st.selectbox("Select entry", list(edit_opts.keys()), key="des_sel_c")
-                sel_row = edit_opts[sel_key]
-                with st.form("designer_edit_client_mat"):
-                    de1, de2 = st.columns([1, 2])
-                    e_date   = de1.date_input("Date", pd.to_datetime(sel_row["date"]).date(), format="DD-MM-YYYY")
-                    e_vendor = de2.text_input("Vendor", value=str(sel_row.get("vendor", "")))
-                    de3, de4 = st.columns([3, 1])
-                    e_desc   = de3.text_input("Description", value=str(sel_row["material_name"]))
-                    e_qty    = de4.number_input("Qty", value=float(sel_row.get("quantity", 1)), step=1.0)
-                    e_amt    = st.number_input("Amount (₹)", value=float(sel_row["amount"]), step=100.0)
-                    btn1, btn2 = st.columns(2)
-                    if btn1.form_submit_button("✅ Update"):
-                        supabase.table("materials").update({
-                            "date": str(e_date), "vendor": e_vendor,
-                            "material_name": e_desc, "quantity": e_qty, "amount": e_amt
-                        }).eq("id", int(sel_row["id"])).execute()
-                        st.success("✅ Updated!")
-                        time.sleep(1)
-                        st.rerun()
-                    if btn2.form_submit_button("🗑️ Delete"):
-                        supabase.table("materials").delete().eq("id", int(sel_row["id"])).execute()
-                        st.success("✅ Deleted.")
-                        time.sleep(1)
-                        st.rerun()
-
-    # ── OUR-SCOPE TAB ─────────────────────────────────────────────────────────
-    with mat_tab_ours:
-        st.caption("Materials already covered in the project quote — no extra charge to the client.")
-
-        if not df_our_scope.empty:
-            df_show_o = df_our_scope[["formatted_date", "material_name"]].rename(
-                columns={"formatted_date": "Date", "material_name": "Description"}
-            )
-            df_show_o["Status"] = "✅ Included in Quote"
-            st.dataframe(df_show_o, use_container_width=True, hide_index=True)
-        else:
-            st.info("ℹ️ No our-scope materials logged yet. Add them below.")
-
-        st.markdown("#### ➕ Add Our-Scope Material")
-        with st.form("designer_add_our_mat"):
-            oc1, oc2 = st.columns([1, 2])
-            om_date = oc1.date_input("Date", inv_end, format="DD-MM-YYYY", key="des_om_date")
-            om_desc = oc2.text_input("Material Description", placeholder="e.g. Wall Paint — Asian Paints Royale")
-            oc3, oc4 = st.columns(2)
-            om_cat  = oc3.selectbox("Category", ["Civil Material", "Steel Material", "Soil Material", "RMC", "Other"], key="des_om_cat")
-            om_qty  = oc4.number_input("Quantity", min_value=0.0, step=1.0, value=1.0, key="des_om_qty")
-
-            if st.form_submit_button("💾 Save", type="primary"):
-                if om_desc.strip():
-                    load = {
-                        "date": str(om_date), "site": inv_site, "category": om_cat,
-                        "vendor": "Our Scope", "material_name": om_desc.strip(),
-                        "quantity": om_qty, "amount": 0.0, "receipt_url": ""
-                    }
-                    if has_scope_col:
-                        load["invoice_scope"] = OUR_SCOPE
-                    try:
-                        supabase.table("materials").insert(load).execute()
-                        st.success("✅ Saved!")
-                        time.sleep(1)
-                        st.rerun()
-                    except Exception:
-                        st.error("⚠️ Failed to save. Check your connection.")
-                else:
-                    st.error("⚠️ Please enter a description.")
-
-        if not df_our_scope.empty:
-            with st.expander("✏️ Edit or Delete an Entry"):
-                edit_opts_o = {
-                    f"{row['formatted_date']} — {row['material_name']}": row
-                    for _, row in df_our_scope.iterrows()
-                }
-                sel_key_o = st.selectbox("Select entry", list(edit_opts_o.keys()), key="des_sel_o")
-                sel_row_o = edit_opts_o[sel_key_o]
-                with st.form("designer_edit_our_mat"):
-                    oe1, oe2 = st.columns([1, 2])
-                    oe_date = oe1.date_input("Date", pd.to_datetime(sel_row_o["date"]).date(), format="DD-MM-YYYY")
-                    oe_desc = oe2.text_input("Description", value=str(sel_row_o["material_name"]))
-                    oe_qty  = st.number_input("Quantity", value=float(sel_row_o.get("quantity", 1)), step=1.0)
-                    ob1, ob2 = st.columns(2)
-                    if ob1.form_submit_button("✅ Update"):
-                        supabase.table("materials").update({
-                            "date": str(oe_date), "material_name": oe_desc, "quantity": oe_qty
-                        }).eq("id", int(sel_row_o["id"])).execute()
-                        st.success("✅ Updated!")
-                        time.sleep(1)
-                        st.rerun()
-                    if ob2.form_submit_button("🗑️ Delete"):
-                        supabase.table("materials").delete().eq("id", int(sel_row_o["id"])).execute()
-                        st.success("✅ Deleted.")
-                        time.sleep(1)
-                        st.rerun()
 
 elif current_tab == "🔍 Site Logs":
     page_header("🔍 Site Logs", "Browse, audit, and manage all recorded entries")
@@ -2141,8 +1775,7 @@ elif current_tab == "👥 Users":
         ph = c_u1.text_input("📱 Mobile Number (Unique ID)", max_chars=10, placeholder="10-digit number")
         nm = c_u2.text_input("👤 Full Name", placeholder="e.g. Ravi Kumar")
         c_u3, c_u4 = st.columns(2)
-        rl = c_u3.selectbox("🎭 Role", ["user", "designer", "admin"],
-                            help="'user' = field supervisor (labour entry). 'designer' = interior designer (client materials only). 'admin' = full access.")
+        rl = c_u3.selectbox("🎭 Role", ["user", "admin"], help="'user' = field worker. 'admin' = full access.")
         all_sites = fetch_data("sites")["name"].tolist()
         asites = c_u4.multiselect("🏗️ Assigned Sites", all_sites,
                                   help="Select sites this user can access. Leave blank to allow all sites.")
