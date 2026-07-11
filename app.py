@@ -877,7 +877,7 @@ if not st.session_state["logged_in"]:
 # --- 8. SIDEBAR: USER PANEL + NAVIGATION ---
 tabs = ["📝 Daily Entry", "📊 Weekly Bill", "🧱 Materials", "📓 My Diary"]
 if st.session_state["role"] == "admin":
-    tabs += ["📈 Dashboard", "🧾 Client Invoice", "🔍 Site Logs", "📍 Sites", "👷 Contractors", "👥 Users", "📂 Archive & Recovery", "🔎 Search Results"]
+    tabs += ["📈 Dashboard", "🧾 Client Invoice", "📑 Custom Labour Report", "🔍 Site Logs", "📍 Sites", "👷 Contractors", "👥 Users", "📂 Archive & Recovery", "🔎 Search Results"]
 
 if "current_tab" not in st.session_state or st.session_state["current_tab"] not in tabs:
     # If we have a restored tab from cookie (post background-switch reload), use it
@@ -1622,13 +1622,148 @@ elif current_tab == "🧾 Client Invoice":
                 date_label = f"{inv_start.strftime('%d-%m-%Y')} to {inv_end.strftime('%d-%m-%Y')}"
                 with st.spinner("Generating your invoice PDF..."):
                     pdf_bytes = generate_client_invoice_bytes(inv_site, date_label, labor_details, pdf_mats, grand_total)
+                # Persist to session_state instead of a local variable: clicking the
+                # download button below triggers its own rerun, which would reset
+                # st.button("Generate...") back to False and make this whole block
+                # (and the download button with it) disappear before the click could
+                # register. Session state survives that rerun.
+                st.session_state["_client_invoice_pdf_bytes"] = pdf_bytes
+                st.session_state["_client_invoice_pdf_name"] = f"Client_Invoice_{inv_site}_{inv_start.strftime('%d%b')}.pdf"
+
+            if st.session_state.get("_client_invoice_pdf_bytes"):
                 st.success("✅ Invoice ready to download!")
                 st.download_button(
                     label="⬇️ Download Client Invoice (PDF)",
-                    data=pdf_bytes,
-                    file_name=f"Client_Invoice_{inv_site}_{inv_start.strftime('%d%b')}.pdf",
+                    data=st.session_state["_client_invoice_pdf_bytes"],
+                    file_name=st.session_state["_client_invoice_pdf_name"],
                     mime="application/pdf"
                 )
+
+elif current_tab == "📑 Custom Labour Report":
+    page_header("📑 Custom Labour Report", "Download a day-by-day labour report for any site or contractor, for any date range you choose")
+
+    df_entries = fetch_data("entries")
+    df_contractors = fetch_data("contractors")
+
+    if df_entries.empty:
+        empty_state("📊", "No entries yet", "Start by logging daily attendance in the Daily Entry tab.")
+    else:
+        df_entries = df_entries.copy()
+        df_entries["date_dt"] = pd.to_datetime(df_entries["date"], errors="coerce")
+        df_entries = df_entries.dropna(subset=["date_dt"])
+
+        df_contractors = df_contractors.copy()
+        if not df_contractors.empty:
+            df_contractors["effective_date"] = pd.to_datetime(
+                df_contractors["effective_date"], errors="coerce"
+            ).dt.date
+
+        st.markdown("### Step 1 — Choose Report Type & Dates")
+        c1, c2, c3 = st.columns(3)
+        report_mode = c1.radio("Report For", ["🏢 Site", "👷 Contractor"], horizontal=False)
+        rep_start = c2.date_input("📅 From", date.today() - timedelta(days=29), format="DD-MM-YYYY", key="clr_from")
+        rep_end = c3.date_input("📅 To", date.today(), format="DD-MM-YYYY", key="clr_to")
+
+        if rep_start > rep_end:
+            st.error("⚠️ 'From' date must be on or before 'To' date.")
+        else:
+            if report_mode == "🏢 Site":
+                options = sorted(df_entries["site"].dropna().unique().tolist())
+                label = "🏗️ Select Site"
+            else:
+                options = sorted(df_entries["contractor"].dropna().unique().tolist())
+                label = "👷 Select Contractor"
+
+            if not options:
+                st.info("ℹ️ No data available to build this report yet.")
+            else:
+                sel_name = st.selectbox(label, options, key="clr_sel_name")
+
+                mask = (df_entries["date_dt"].dt.date >= rep_start) & (df_entries["date_dt"].dt.date <= rep_end)
+                if report_mode == "🏢 Site":
+                    mask &= (df_entries["site"] == sel_name)
+                else:
+                    mask &= (df_entries["contractor"] == sel_name)
+                df_range = df_entries[mask].copy()
+
+                st.divider()
+                st.markdown(f"### Step 2 — Preview: {sel_name}")
+                st.caption(f"Showing **{rep_start.strftime('%d %b %Y')}** to **{rep_end.strftime('%d %b %Y')}** ({(rep_end - rep_start).days + 1} days).")
+
+                if df_range.empty:
+                    st.info("ℹ️ No entries found for this selection in the chosen date range.")
+                else:
+                    full_range_dates = [rep_start + timedelta(days=i) for i in range((rep_end - rep_start).days + 1)]
+                    billing_data = []
+                    grand_amt = 0.0
+
+                    # When reporting on a Site, break out each contractor who worked there.
+                    # When reporting on a Contractor, break out each site they worked at.
+                    if report_mode == "🏢 Site":
+                        sub_groups = sorted(df_range["contractor"].dropna().unique().tolist())
+                        group_col = "contractor"
+                    else:
+                        sub_groups = sorted(df_range["site"].dropna().unique().tolist())
+                        group_col = "site"
+
+                    for grp in sub_groups:
+                        df_sub = df_range[df_range[group_col] == grp]
+                        con_for_rate = grp if report_mode == "🏢 Site" else sel_name
+                        rm, rh, rl = _safe_get_rates(df_contractors, con_for_rate, rep_start) if not df_contractors.empty else (0.0, 0.0, 0.0)
+                        rows, tm, th, tl, tamt = _build_week_rows(df_sub, full_range_dates, rm, rh, rl)
+                        billing_data.append({
+                            "name": grp, "rows": rows,
+                            "totals": {"m": tm, "h": th, "l": tl, "amt": tamt},
+                            "rates": {"rm": rm, "rh": rh, "rl": rl}
+                        })
+                        grand_amt += tamt
+
+                        st.markdown(f"#### {'👷' if report_mode == '🏢 Site' else '📍'} {grp}")
+                        if rm == 0 and rh == 0 and rl == 0:
+                            st.caption("⚠️ No rates found — amounts show as ₹0. Add rates in the Contractors tab.")
+                        k1, k2, k3, k4 = st.columns(4)
+                        k1.metric("💰 Amount", f"₹{tamt:,.0f}")
+                        k2.metric("🧱 Mason Shifts", f"{tm:g}")
+                        k3.metric("🛠️ Helper Shifts", f"{th:g}")
+                        k4.metric("👩 Ladies Shifts", f"{tl:g}")
+                        with st.expander(f"📄 Day-by-Day: {grp}"):
+                            st.caption("— = no entry submitted. Nil = holiday/no-work entry submitted.")
+                            # st.table (not st.dataframe) on purpose — avoids the pyarrow
+                            # native-crash issue seen on this environment's Python build.
+                            st.table(pd.DataFrame(rows))
+
+                    st.divider()
+                    st.markdown(f"## 💰 Grand Total: ₹{grand_amt:,.2f}")
+
+                    period_label = f"{rep_start.strftime('%d-%m-%Y')} to {rep_end.strftime('%d-%m-%Y')}"
+
+                    cA, cB = st.columns(2)
+                    with cA:
+                        if st.button("📄 Generate PDF Report", type="primary", width='stretch', key="clr_gen_pdf"):
+                            with st.spinner("Generating your PDF report..."):
+                                pdf_bytes = generate_pdf_bytes(sel_name, period_label, billing_data)
+                            st.session_state["_clr_pdf_bytes"] = pdf_bytes
+                            st.session_state["_clr_pdf_name"] = f"Labour_Report_{sel_name}_{rep_start.strftime('%d%b')}_{rep_end.strftime('%d%b')}.pdf"
+                    with cB:
+                        csv_bytes = df_range.drop(columns=["date_dt"], errors="ignore").to_csv(index=False).encode("utf-8")
+                        st.download_button(
+                            "📊 Download Raw Data (CSV)", csv_bytes,
+                            f"Labour_Data_{sel_name}_{rep_start.strftime('%d%b')}_{rep_end.strftime('%d%b')}.csv",
+                            "text/csv", width='stretch'
+                        )
+
+                    # Rendered outside the generate-button block on purpose: clicking
+                    # download_button triggers its own rerun, which would otherwise
+                    # reset st.button("Generate...") to False and make this vanish
+                    # before the click could register. session_state survives that.
+                    if st.session_state.get("_clr_pdf_bytes"):
+                        st.success("✅ Report ready to download!")
+                        st.download_button(
+                            label="⬇️ Download PDF Report",
+                            data=st.session_state["_clr_pdf_bytes"],
+                            file_name=st.session_state["_clr_pdf_name"],
+                            mime="application/pdf"
+                        )
 
 elif current_tab == "🔍 Site Logs":
     page_header("🔍 Site Logs", "Browse, audit, and manage all recorded entries")
