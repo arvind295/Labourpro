@@ -331,25 +331,35 @@ def tds_rate_for(pan_number, entity_type):
         return 0.01, "Individual/HUF — 1%"
     return 0.02, "Company/Firm/Other — 2%"
 
-def latest_contractor_profile(df_contractors, contractor_name):
-    """Most recent PAN/entity_type on file for a contractor (these live on the
-    rate-history rows, so we take the latest by effective_date)."""
+def latest_contractor_profile(df_contractors, contractor_name, df_tds_only=None):
+    """Most recent PAN/entity_type on file for a contractor. Checks the labour
+    contractors table first (rate-history rows, latest by effective_date), then
+    falls back to the TDS-only contractors table for people who don't do daily
+    labour but still need TDS tracked."""
     pan, entity = "", "Individual / HUF"
-    if df_contractors is None or df_contractors.empty or "name" not in df_contractors.columns:
-        return pan, entity
-    crows = df_contractors[df_contractors["name"] == contractor_name]
-    if crows.empty:
-        return pan, entity
-    if "effective_date" in crows.columns:
-        crows = crows.copy()
-        crows["effective_date"] = pd.to_datetime(crows["effective_date"], errors="coerce")
-        crows = crows.sort_values("effective_date", ascending=False)
-    latest = crows.iloc[0]
-    pan = (latest.get("pan_number") or "").strip() if "pan_number" in crows.columns else ""
-    entity = latest.get("entity_type") or "Individual / HUF" if "entity_type" in crows.columns else "Individual / HUF"
+    if df_contractors is not None and not df_contractors.empty and "name" in df_contractors.columns:
+        crows = df_contractors[df_contractors["name"] == contractor_name]
+        if not crows.empty:
+            if "effective_date" in crows.columns:
+                crows = crows.copy()
+                crows["effective_date"] = pd.to_datetime(crows["effective_date"], errors="coerce")
+                crows = crows.sort_values("effective_date", ascending=False)
+            latest = crows.iloc[0]
+            pan = (latest.get("pan_number") or "").strip() if "pan_number" in crows.columns else ""
+            entity = latest.get("entity_type") or "Individual / HUF" if "entity_type" in crows.columns else "Individual / HUF"
+            if pan or entity != "Individual / HUF":
+                return pan, entity
+
+    if df_tds_only is not None and not df_tds_only.empty and "name" in df_tds_only.columns:
+        trows = df_tds_only[df_tds_only["name"] == contractor_name]
+        if not trows.empty:
+            latest = trows.iloc[0]
+            pan = (latest.get("pan_number") or "").strip()
+            entity = latest.get("entity_type") or "Individual / HUF"
+
     return pan, entity
 
-def compute_tds_summary(df_txn, df_contractors, df_deductions, fy_label):
+def compute_tds_summary(df_txn, df_contractors, df_deductions, fy_label, df_tds_only=None):
     """Per-contractor TDS position for one financial year.
     Rule: TDS applies to the ENTIRE FY amount paid to a contractor (not just the
     excess) once EITHER a single payment exceeds ₹30,000 OR the FY running total
@@ -371,7 +381,7 @@ def compute_tds_summary(df_txn, df_contractors, df_deductions, fy_label):
         total_paid = float(grp["amount"].sum())
         threshold_crossed = bool((grp["amount"] > 30000).any() or total_paid > 100000)
 
-        pan, entity = latest_contractor_profile(df_contractors, cname)
+        pan, entity = latest_contractor_profile(df_contractors, cname, df_tds_only)
         rate, rate_label = tds_rate_for(pan, entity)
         tds_liability = round(total_paid * rate, 2) if threshold_crossed else 0.0
 
@@ -1760,6 +1770,7 @@ elif current_tab == "💰 TDS Calculator":
     df_contractors_tds = fetch_data("contractors")
     df_txn = fetch_data("tds_transactions")
     df_deductions = fetch_data("tds_deductions")
+    df_tds_only = fetch_data("tds_only_contractors")
 
     active_contractor_names = []
     if not df_contractors_tds.empty:
@@ -1768,17 +1779,25 @@ elif current_tab == "💰 TDS Calculator":
         else:
             active_contractor_names = sorted(df_contractors_tds["name"].unique().tolist())
 
-    tab_log, tab_payable, tab_history = st.tabs(["📥 Log Bank Payment", "📊 TDS Payable", "📜 Payment Log"])
+    tds_only_names = sorted(df_tds_only["name"].unique().tolist()) if not df_tds_only.empty else []
+
+    # Combined list for logging payments — labour contractors ARE also eligible
+    # for TDS logging (they get paid too), plus anyone added as TDS-only.
+    all_payable_names = sorted(set(active_contractor_names) | set(tds_only_names))
+
+    tab_log, tab_payable, tab_only, tab_history = st.tabs(
+        ["📥 Log Bank Payment", "📊 TDS Payable", "👤 TDS-Only Contractors", "📜 Payment Log"]
+    )
 
     # ── LOG A BANK PAYMENT ──────────────────────────────────────────────────
     with tab_log:
-        st.caption("Every payment you make to a contractor through the bank goes in here — the calculator uses this to track each contractor's running total for the financial year.")
-        if not active_contractor_names:
-            empty_state("👷", "No contractors found", "Add a contractor first from the Contractors tab.")
+        st.caption("Every payment you make to a contractor through the bank goes in here — the calculator uses this to track each contractor's running total for the financial year. This list includes your Daily Entry contractors AND anyone added under 'TDS-Only Contractors'.")
+        if not all_payable_names:
+            empty_state("👷", "No contractors found", "Add a contractor from the Contractors tab, or add a TDS-only contractor in the sub-tab here.")
         else:
             with st.form("tds_txn_form"):
                 t1, t2 = st.columns(2)
-                txn_contractor = t1.selectbox("Contractor", active_contractor_names)
+                txn_contractor = t1.selectbox("Contractor", all_payable_names)
                 txn_amount = t2.number_input("Amount Paid (₹)", min_value=0.0, step=1000.0, format="%.2f")
                 txn_date = st.date_input("Date of Payment", date.today(), format="DD-MM-YYYY")
                 if st.form_submit_button("💾 Log Payment", type="primary"):
@@ -1803,7 +1822,7 @@ elif current_tab == "💰 TDS Calculator":
         default_fy_index = fy_options.index(current_financial_year()) if current_financial_year() in fy_options else 0
         sel_fy = st.selectbox("Financial Year", fy_options, index=default_fy_index)
 
-        summary_df = compute_tds_summary(df_txn, df_contractors_tds, df_deductions, sel_fy)
+        summary_df = compute_tds_summary(df_txn, df_contractors_tds, df_deductions, sel_fy, df_tds_only)
 
         if summary_df.empty:
             empty_state("💰", "No payments logged for this FY", "Log a bank payment in the previous sub-tab to see the TDS position here.")
@@ -1844,6 +1863,61 @@ elif current_tab == "💰 TDS Calculator":
                             st.rerun()
                         except Exception as e:
                             st.error(f"⚠️ Could not save this deposit: {e}")
+
+    # ── TDS-ONLY CONTRACTORS (never appear in Daily Entry) ──────────────────
+    with tab_only:
+        st.caption("Contractors added here are used ONLY for TDS tracking — they will never show up in the Daily Entry, Weekly Bill, or any labour-tracking screens.")
+
+        if df_tds_only.empty:
+            empty_state("👤", "No TDS-only contractors yet", "Add one below.")
+        else:
+            show_only = df_tds_only[["name", "pan_number", "entity_type"]].rename(
+                columns={"name": "Contractor", "pan_number": "PAN", "entity_type": "Entity Type"}
+            )
+            st.dataframe(show_only, width='stretch', hide_index=True)
+
+        st.divider()
+        only_act = st.radio("What would you like to do?", ["Add New", "Edit Existing"], horizontal=True, key="tds_only_act")
+
+        with st.form("tds_only_form"):
+            if only_act == "Add New":
+                st.markdown("#### ➕ Add TDS-Only Contractor")
+                oc_name = st.text_input("Contractor Name", placeholder="e.g. Sharma Electricals")
+                default_pan_o, default_entity_o = "", "Individual / HUF"
+            else:
+                st.markdown("#### ✏️ Edit TDS-Only Contractor")
+                if tds_only_names:
+                    oc_name = st.selectbox("Select Contractor", tds_only_names)
+                    existing_row = df_tds_only[df_tds_only["name"] == oc_name].iloc[0]
+                    default_pan_o = existing_row.get("pan_number", "") or ""
+                    default_entity_o = existing_row.get("entity_type", "Individual / HUF") or "Individual / HUF"
+                else:
+                    st.info("ℹ️ No TDS-only contractors to edit yet.")
+                    oc_name = None
+                    default_pan_o, default_entity_o = "", "Individual / HUF"
+
+            oc_pan = st.text_input("PAN Number", value=default_pan_o, placeholder="e.g. ABCDE1234F",
+                                   help="Leave blank if not available — TDS will default to the flat 20% no-PAN rate.")
+            oc_entity = st.selectbox("Entity Type", TDS_ENTITY_OPTIONS,
+                                     index=TDS_ENTITY_OPTIONS.index(default_entity_o) if default_entity_o in TDS_ENTITY_OPTIONS else 0)
+
+            if st.form_submit_button("💾 Save Contractor", type="primary"):
+                if not oc_name or not str(oc_name).strip():
+                    st.error("⚠️ Enter a contractor name.")
+                elif oc_name in active_contractor_names:
+                    st.error("⚠️ This name is already used by a Daily Entry contractor. Pick a different name to keep the two lists separate.")
+                else:
+                    try:
+                        payload = {
+                            "name": oc_name.strip(),
+                            "pan_number": oc_pan.strip().upper() if oc_pan else "",
+                            "entity_type": oc_entity,
+                        }
+                        supabase.table("tds_only_contractors").upsert(payload, on_conflict="name").execute()
+                        st.success(f"✅ Saved **{oc_name}** as a TDS-only contractor.")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"⚠️ Could not save this contractor: {e}")
 
     # ── PAYMENT LOG ──────────────────────────────────────────────────────────
     with tab_history:
