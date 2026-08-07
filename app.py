@@ -1772,18 +1772,7 @@ elif current_tab == "💰 TDS Calculator":
     df_deductions = fetch_data("tds_deductions")
     df_tds_only = fetch_data("tds_only_contractors")
 
-    active_contractor_names = []
-    if not df_contractors_tds.empty:
-        if "status" in df_contractors_tds.columns:
-            active_contractor_names = sorted(df_contractors_tds[df_contractors_tds["status"] != "Inactive"]["name"].unique().tolist())
-        else:
-            active_contractor_names = sorted(df_contractors_tds["name"].unique().tolist())
-
     tds_only_names = sorted(df_tds_only["name"].unique().tolist()) if not df_tds_only.empty else []
-
-    # Combined list for logging payments — labour contractors ARE also eligible
-    # for TDS logging (they get paid too), plus anyone added as TDS-only.
-    all_payable_names = sorted(set(active_contractor_names) | set(tds_only_names))
 
     tab_log, tab_payable, tab_only, tab_history = st.tabs(
         ["📥 Log Bank Payment", "📊 TDS Payable", "👤 TDS-Only Contractors", "📜 Payment Log"]
@@ -1791,13 +1780,13 @@ elif current_tab == "💰 TDS Calculator":
 
     # ── LOG A BANK PAYMENT ──────────────────────────────────────────────────
     with tab_log:
-        st.caption("Every payment you make to a contractor through the bank goes in here — the calculator uses this to track each contractor's running total for the financial year. This list includes your Daily Entry contractors AND anyone added under 'TDS-Only Contractors'.")
-        if not all_payable_names:
-            empty_state("👷", "No contractors found", "Add a contractor from the Contractors tab, or add a TDS-only contractor in the sub-tab here.")
+        st.caption("This is completely separate from your Daily Entry contractors. Only contractors added under 'TDS-Only Contractors' show up here — add them there first, then log payments.")
+        if not tds_only_names:
+            empty_state("👤", "No TDS contractors yet", "Add one in the 'TDS-Only Contractors' sub-tab first.")
         else:
             with st.form("tds_txn_form"):
                 t1, t2 = st.columns(2)
-                txn_contractor = t1.selectbox("Contractor", all_payable_names)
+                txn_contractor = t1.selectbox("Contractor", tds_only_names)
                 txn_amount = t2.number_input("Amount Paid (₹)", min_value=0.0, step=1000.0, format="%.2f")
                 txn_date = st.date_input("Date of Payment", date.today(), format="DD-MM-YYYY")
                 if st.form_submit_button("💾 Log Payment", type="primary"):
@@ -1904,8 +1893,6 @@ elif current_tab == "💰 TDS Calculator":
             if st.form_submit_button("💾 Save Contractor", type="primary"):
                 if not oc_name or not str(oc_name).strip():
                     st.error("⚠️ Enter a contractor name.")
-                elif oc_name in active_contractor_names:
-                    st.error("⚠️ This name is already used by a Daily Entry contractor. Pick a different name to keep the two lists separate.")
                 else:
                     try:
                         payload = {
