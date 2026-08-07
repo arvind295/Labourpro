@@ -302,6 +302,101 @@ def empty_state(icon, title, text=""):
         </div>
     """, unsafe_allow_html=True)
 
+# --- TDS (Section 194C / 393(1)) HELPERS ---
+TDS_ENTITY_OPTIONS = ["Individual / HUF", "Company / Firm / Other"]
+
+def get_financial_year(d):
+    """Indian FY runs 1 Apr - 31 Mar. Returns e.g. '2026-27' for any date in that window."""
+    if isinstance(d, str):
+        d = pd.to_datetime(d).date()
+    elif isinstance(d, datetime):
+        d = d.date()
+    if d.month >= 4:
+        return f"{d.year}-{str(d.year + 1)[-2:]}"
+    return f"{d.year - 1}-{str(d.year)[-2:]}"
+
+def current_financial_year():
+    return get_financial_year(date.today())
+
+def list_financial_years(back=3, fwd=0):
+    """A handful of FY labels around today, most recent first, for a selectbox."""
+    cy = date.today().year if date.today().month >= 4 else date.today().year - 1
+    return [f"{y}-{str(y + 1)[-2:]}" for y in range(cy + fwd, cy - back - 1, -1)]
+
+def tds_rate_for(pan_number, entity_type):
+    """Returns (rate, human-readable reason) per Sec 194C / 393(1)."""
+    if not pan_number or not str(pan_number).strip():
+        return 0.20, "No PAN on file — flat 20%"
+    if entity_type == "Individual / HUF":
+        return 0.01, "Individual/HUF — 1%"
+    return 0.02, "Company/Firm/Other — 2%"
+
+def latest_contractor_profile(df_contractors, contractor_name):
+    """Most recent PAN/entity_type on file for a contractor (these live on the
+    rate-history rows, so we take the latest by effective_date)."""
+    pan, entity = "", "Individual / HUF"
+    if df_contractors is None or df_contractors.empty or "name" not in df_contractors.columns:
+        return pan, entity
+    crows = df_contractors[df_contractors["name"] == contractor_name]
+    if crows.empty:
+        return pan, entity
+    if "effective_date" in crows.columns:
+        crows = crows.copy()
+        crows["effective_date"] = pd.to_datetime(crows["effective_date"], errors="coerce")
+        crows = crows.sort_values("effective_date", ascending=False)
+    latest = crows.iloc[0]
+    pan = (latest.get("pan_number") or "").strip() if "pan_number" in crows.columns else ""
+    entity = latest.get("entity_type") or "Individual / HUF" if "entity_type" in crows.columns else "Individual / HUF"
+    return pan, entity
+
+def compute_tds_summary(df_txn, df_contractors, df_deductions, fy_label):
+    """Per-contractor TDS position for one financial year.
+    Rule: TDS applies to the ENTIRE FY amount paid to a contractor (not just the
+    excess) once EITHER a single payment exceeds ₹30,000 OR the FY running total
+    exceeds ₹1,00,000. 'Payable Now' nets off whatever has already been deposited
+    and logged for that contractor+FY so the same rupee is never shown twice."""
+    if df_txn is None or df_txn.empty:
+        return pd.DataFrame()
+
+    df_txn = df_txn.copy()
+    df_txn["txn_date"] = pd.to_datetime(df_txn["txn_date"]).dt.date
+    df_txn["fy"] = df_txn["txn_date"].apply(get_financial_year)
+    df_fy = df_txn[df_txn["fy"] == fy_label]
+    if df_fy.empty:
+        return pd.DataFrame()
+
+    rows = []
+    for cname, grp in df_fy.groupby("contractor_name"):
+        grp = grp.sort_values("txn_date")
+        total_paid = float(grp["amount"].sum())
+        threshold_crossed = bool((grp["amount"] > 30000).any() or total_paid > 100000)
+
+        pan, entity = latest_contractor_profile(df_contractors, cname)
+        rate, rate_label = tds_rate_for(pan, entity)
+        tds_liability = round(total_paid * rate, 2) if threshold_crossed else 0.0
+
+        already_deposited = 0.0
+        if df_deductions is not None and not df_deductions.empty:
+            dgrp = df_deductions[
+                (df_deductions["contractor_name"] == cname) & (df_deductions["financial_year"] == fy_label)
+            ]
+            already_deposited = float(dgrp["amount"].sum())
+
+        payable_now = round(max(tds_liability - already_deposited, 0.0), 2)
+
+        rows.append({
+            "Contractor": cname,
+            "PAN": pan if pan else "— missing —",
+            "Category": rate_label,
+            "Total Paid (FY)": total_paid,
+            "Threshold Crossed": "✅ Yes" if threshold_crossed else "No",
+            "TDS Liability (FY)": tds_liability,
+            "Already Deposited": already_deposited,
+            "Payable Now": payable_now,
+            "_last_txn_date": grp["txn_date"].max(),
+        })
+    return pd.DataFrame(rows)
+
 # --- PDF ENGINE FOR LABOUR BILLS ---
 class PDFBill(FPDF):
     def header(self):
@@ -897,7 +992,7 @@ if not st.session_state["logged_in"]:
 # --- 8. SIDEBAR: USER PANEL + NAVIGATION ---
 tabs = ["📝 Daily Entry", "📊 Weekly Bill", "🧱 Materials", "📓 My Diary"]
 if st.session_state["role"] == "admin":
-    tabs += ["📈 Dashboard", "🧾 Client Invoice", "📑 Custom Labour Report", "🔍 Site Logs", "📍 Sites", "👷 Contractors", "👥 Users", "📂 Archive & Recovery", "🔎 Search Results"]
+    tabs += ["📈 Dashboard", "🧾 Client Invoice", "💰 TDS Calculator", "📑 Custom Labour Report", "🔍 Site Logs", "📍 Sites", "👷 Contractors", "👥 Users", "📂 Archive & Recovery", "🔎 Search Results"]
 
 if "current_tab" not in st.session_state or st.session_state["current_tab"] not in tabs:
     # If we have a restored tab from cookie (post background-switch reload), use it
@@ -1659,6 +1754,126 @@ elif current_tab == "🧾 Client Invoice":
                     mime="application/pdf"
                 )
 
+elif current_tab == "💰 TDS Calculator":
+    page_header("💰 TDS Calculator", "Log contractor payments made from your bank account and see what TDS is due each month")
+
+    df_contractors_tds = fetch_data("contractors")
+    df_txn = fetch_data("tds_transactions")
+    df_deductions = fetch_data("tds_deductions")
+
+    active_contractor_names = []
+    if not df_contractors_tds.empty:
+        if "status" in df_contractors_tds.columns:
+            active_contractor_names = sorted(df_contractors_tds[df_contractors_tds["status"] != "Inactive"]["name"].unique().tolist())
+        else:
+            active_contractor_names = sorted(df_contractors_tds["name"].unique().tolist())
+
+    tab_log, tab_payable, tab_history = st.tabs(["📥 Log Bank Payment", "📊 TDS Payable", "📜 Payment Log"])
+
+    # ── LOG A BANK PAYMENT ──────────────────────────────────────────────────
+    with tab_log:
+        st.caption("Every payment you make to a contractor through the bank goes in here — the calculator uses this to track each contractor's running total for the financial year.")
+        if not active_contractor_names:
+            empty_state("👷", "No contractors found", "Add a contractor first from the Contractors tab.")
+        else:
+            with st.form("tds_txn_form"):
+                t1, t2 = st.columns(2)
+                txn_contractor = t1.selectbox("Contractor", active_contractor_names)
+                txn_amount = t2.number_input("Amount Paid (₹)", min_value=0.0, step=1000.0, format="%.2f")
+                txn_date = st.date_input("Date of Payment", date.today(), format="DD-MM-YYYY")
+                if st.form_submit_button("💾 Log Payment", type="primary"):
+                    if txn_amount <= 0:
+                        st.error("⚠️ Enter an amount greater than zero.")
+                    else:
+                        try:
+                            supabase.table("tds_transactions").insert({
+                                "contractor_name": txn_contractor,
+                                "amount": txn_amount,
+                                "txn_date": str(txn_date),
+                            }).execute()
+                            st.success(f"✅ Logged ₹{txn_amount:,.2f} paid to **{txn_contractor}** on {txn_date.strftime('%d %b %Y')}.")
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"⚠️ Could not save this payment: {e}")
+
+    # ── MONTHLY TDS PAYABLE ──────────────────────────────────────────────────
+    with tab_payable:
+        st.caption("TDS applies to a contractor's ENTIRE financial-year total (not just the excess) once either a single payment exceeds ₹30,000 or the FY running total exceeds ₹1,00,000.")
+        fy_options = list_financial_years()
+        default_fy_index = fy_options.index(current_financial_year()) if current_financial_year() in fy_options else 0
+        sel_fy = st.selectbox("Financial Year", fy_options, index=default_fy_index)
+
+        summary_df = compute_tds_summary(df_txn, df_contractors_tds, df_deductions, sel_fy)
+
+        if summary_df.empty:
+            empty_state("💰", "No payments logged for this FY", "Log a bank payment in the previous sub-tab to see the TDS position here.")
+        else:
+            display_df = summary_df.drop(columns=["_last_txn_date"]).copy()
+            for col in ["Total Paid (FY)", "TDS Liability (FY)", "Already Deposited", "Payable Now"]:
+                display_df[col] = display_df[col].apply(lambda x: f"₹{x:,.2f}")
+            st.dataframe(display_df, width='stretch', hide_index=True)
+
+            total_payable = summary_df["Payable Now"].sum()
+            k1, k2 = st.columns(2)
+            k1.metric("👷 Contractors with dues", str((summary_df["Payable Now"] > 0).sum()))
+            k2.metric("💰 Total TDS Payable Now", f"₹{total_payable:,.2f}")
+
+            st.divider()
+            st.markdown("#### ✅ Mark TDS as Deposited")
+            st.caption("Once you've paid a contractor's TDS to the government for this FY, log it here so it's not shown as due again next month.")
+            payable_names = summary_df[summary_df["Payable Now"] > 0]["Contractor"].tolist()
+            if not payable_names:
+                st.info("ℹ️ Nothing currently payable for this financial year.")
+            else:
+                with st.form("tds_deposit_form"):
+                    d1, d2 = st.columns(2)
+                    dep_contractor = d1.selectbox("Contractor", payable_names)
+                    dep_row = summary_df[summary_df["Contractor"] == dep_contractor].iloc[0]
+                    dep_amount = d2.number_input("Amount Deposited (₹)", min_value=0.0,
+                                                 value=float(dep_row["Payable Now"]), step=100.0, format="%.2f")
+                    dep_date = st.date_input("Date Deposited", date.today(), format="DD-MM-YYYY")
+                    if st.form_submit_button("💾 Record Deposit", type="primary"):
+                        try:
+                            supabase.table("tds_deductions").insert({
+                                "contractor_name": dep_contractor,
+                                "financial_year": sel_fy,
+                                "amount": dep_amount,
+                                "deposited_date": str(dep_date),
+                            }).execute()
+                            st.success(f"✅ Recorded ₹{dep_amount:,.2f} TDS deposited for **{dep_contractor}**.")
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"⚠️ Could not save this deposit: {e}")
+
+    # ── PAYMENT LOG ──────────────────────────────────────────────────────────
+    with tab_history:
+        st.caption("All bank payments logged for the TDS calculator.")
+        if df_txn.empty:
+            empty_state("📜", "No payments logged yet")
+        else:
+            hist = df_txn.copy()
+            hist["txn_date"] = pd.to_datetime(hist["txn_date"]).dt.date
+            hist = hist.sort_values("txn_date", ascending=False)
+            hist_display = hist[["contractor_name", "amount", "txn_date"]].rename(
+                columns={"contractor_name": "Contractor", "amount": "Amount (₹)", "txn_date": "Date"}
+            )
+            hist_display["Amount (₹)"] = hist_display["Amount (₹)"].apply(lambda x: f"₹{x:,.2f}")
+            st.dataframe(hist_display, width='stretch', hide_index=True)
+
+            st.divider()
+            st.markdown("##### 🗑️ Delete a Logged Payment")
+            del_options = {f"{r['contractor_name']} — ₹{r['amount']:,.2f} on {r['txn_date'].strftime('%d %b %Y')}": r["id"]
+                           for _, r in hist.iterrows()} if "id" in hist.columns else {}
+            if del_options:
+                sel_del = st.selectbox("Select entry to delete", list(del_options.keys()))
+                if st.button("🗑️ Delete This Payment"):
+                    try:
+                        supabase.table("tds_transactions").delete().eq("id", del_options[sel_del]).execute()
+                        st.success("✅ Payment deleted.")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"⚠️ Could not delete this entry: {e}")
+
 elif current_tab == "📑 Custom Labour Report":
     page_header("📑 Custom Labour Report", "Download a day-by-day labour report for any site or contractor, for any date range you choose")
 
@@ -1929,10 +2144,12 @@ elif current_tab == "👷 Contractors":
                 st.markdown("#### ➕ Add New Contractor")
                 st.caption("Enter the contractor's name and their daily worker rates.")
                 cn = st.text_input("Contractor Name", placeholder="e.g. Ram Singh & Co")
+                default_pan, default_entity = "", "Individual / HUF"
             else:
                 st.markdown("#### ✏️ Update Contractor Rate")
                 st.caption("This adds a new rate entry. The old rate is preserved for historical bills.")
                 cn = st.selectbox("Select Contractor", df_c["name"].unique()) if not df_c.empty else st.text_input("Contractor Name")
+                default_pan, default_entity = latest_contractor_profile(df_c, cn) if cn else ("", "Individual / HUF")
 
             c1, c2, c3 = st.columns(3)
             rm = c1.number_input("Mason Rate (₹/shift)", value=0, min_value=0, help="Daily rate per mason worker.")
@@ -1941,13 +2158,23 @@ elif current_tab == "👷 Contractors":
             ed = st.date_input("Effective From", date.today(), format="DD-MM-YYYY",
                                help="The date from which this rate applies. All bills from this date onward will use this rate.")
 
+            st.markdown("###### 🧾 TDS Details")
+            st.caption("Used by the TDS Calculator to work out the deduction rate for this contractor.")
+            c4, c5 = st.columns(2)
+            pan_in = c4.text_input("PAN Number", value=default_pan, placeholder="e.g. ABCDE1234F",
+                                   help="Leave blank if not available — TDS will default to the flat 20% no-PAN rate.")
+            entity_in = c5.selectbox("Entity Type", TDS_ENTITY_OPTIONS,
+                                     index=TDS_ENTITY_OPTIONS.index(default_entity) if default_entity in TDS_ENTITY_OPTIONS else 0,
+                                     help="Individual/HUF is taxed at 1%, everything else (company, firm, partnership) at 2%.")
+
             if st.form_submit_button("💾 Save Rate"):
                 insert_status = "Active"
                 if act == "Update Existing Rate" and "status" in df_c.columns and cn:
                     insert_status = df_c[df_c["name"] == cn].iloc[0].get("status", "Active")
 
                 data_to_insert = {
-                    "name": cn, "rate_mason": rm, "rate_helper": rh, "rate_ladies": rl, "effective_date": str(ed)
+                    "name": cn, "rate_mason": rm, "rate_helper": rh, "rate_ladies": rl, "effective_date": str(ed),
+                    "pan_number": pan_in.strip().upper() if pan_in else "", "entity_type": entity_in,
                 }
                 if "status" in df_c.columns:
                     data_to_insert["status"] = insert_status
