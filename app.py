@@ -359,31 +359,65 @@ def latest_contractor_profile(df_contractors, contractor_name, df_tds_only=None)
 
     return pan, entity
 
-def compute_tds_summary(df_txn, df_contractors, df_deductions, fy_label, df_tds_only=None):
-    """Per-contractor TDS position for one financial year.
-    Rule: TDS applies to the ENTIRE FY amount paid to a contractor (not just the
-    excess) once EITHER a single payment exceeds ₹30,000 OR the FY running total
-    exceeds ₹1,00,000. 'Payable Now' nets off whatever has already been deposited
-    and logged for that contractor+FY so the same rupee is never shown twice."""
+def compute_tds_ledger(df_txn, df_tds_only):
+    """Per-transaction TDS ledger. Walks each contractor's payments in date
+    order within each financial year and works out the TDS owed on EACH
+    transaction individually: the transaction that first crosses the ₹30,000
+    single-payment or ₹1,00,000 aggregate threshold pulls the FULL cumulative
+    amount into TDS, and every transaction after that is taxed on just its own
+    amount — so summing 'TDS Deducted' across any date range gives the correct
+    TDS for that period without double-counting."""
     if df_txn is None or df_txn.empty:
         return pd.DataFrame()
 
-    df_txn = df_txn.copy()
-    df_txn["txn_date"] = pd.to_datetime(df_txn["txn_date"]).dt.date
-    df_txn["fy"] = df_txn["txn_date"].apply(get_financial_year)
-    df_fy = df_txn[df_txn["fy"] == fy_label]
+    df = df_txn.copy()
+    df["txn_date"] = pd.to_datetime(df["txn_date"]).dt.date
+    df["fy"] = df["txn_date"].apply(get_financial_year)
+    df = df.sort_values(["contractor_name", "fy", "txn_date"])
+
+    ledger_rows = []
+    for (cname, fy), grp in df.groupby(["contractor_name", "fy"]):
+        pan, entity = latest_contractor_profile(None, cname, df_tds_only)
+        rate, rate_label = tds_rate_for(pan, entity)
+        cumulative = 0.0
+        liable = False
+        for _, r in grp.iterrows():
+            liability_before = (cumulative * rate) if liable else 0.0
+            cumulative += float(r["amount"])
+            if r["amount"] > 30000 or cumulative > 100000:
+                liable = True
+            liability_after = (cumulative * rate) if liable else 0.0
+            tds_this_txn = round(liability_after - liability_before, 2)
+            ledger_rows.append({
+                "id": r.get("id"),
+                "Contractor": cname,
+                "PAN": pan if pan else "— missing —",
+                "Category": rate_label,
+                "Date": r["txn_date"],
+                "FY": fy,
+                "Amount Paid": float(r["amount"]),
+                "Cumulative FY Total": round(cumulative, 2),
+                "TDS Deducted": tds_this_txn,
+            })
+    return pd.DataFrame(ledger_rows)
+
+def compute_tds_summary(df_txn, df_deductions, fy_label, df_tds_only=None):
+    """Per-contractor TDS position for one financial year, built from the ledger.
+    'Payable Now' nets off whatever has already been deposited and logged for
+    that contractor+FY so the same rupee is never shown twice."""
+    ledger = compute_tds_ledger(df_txn, df_tds_only)
+    if ledger.empty:
+        return pd.DataFrame()
+
+    df_fy = ledger[ledger["FY"] == fy_label]
     if df_fy.empty:
         return pd.DataFrame()
 
     rows = []
-    for cname, grp in df_fy.groupby("contractor_name"):
-        grp = grp.sort_values("txn_date")
-        total_paid = float(grp["amount"].sum())
-        threshold_crossed = bool((grp["amount"] > 30000).any() or total_paid > 100000)
-
-        pan, entity = latest_contractor_profile(df_contractors, cname, df_tds_only)
-        rate, rate_label = tds_rate_for(pan, entity)
-        tds_liability = round(total_paid * rate, 2) if threshold_crossed else 0.0
+    for cname, grp in df_fy.groupby("Contractor"):
+        total_paid = float(grp["Amount Paid"].sum())
+        tds_liability = round(float(grp["TDS Deducted"].sum()), 2)
+        threshold_crossed = tds_liability > 0
 
         already_deposited = 0.0
         if df_deductions is not None and not df_deductions.empty:
@@ -396,16 +430,123 @@ def compute_tds_summary(df_txn, df_contractors, df_deductions, fy_label, df_tds_
 
         rows.append({
             "Contractor": cname,
-            "PAN": pan if pan else "— missing —",
-            "Category": rate_label,
+            "PAN": grp["PAN"].iloc[0],
+            "Category": grp["Category"].iloc[0],
             "Total Paid (FY)": total_paid,
             "Threshold Crossed": "✅ Yes" if threshold_crossed else "No",
             "TDS Liability (FY)": tds_liability,
             "Already Deposited": already_deposited,
             "Payable Now": payable_now,
-            "_last_txn_date": grp["txn_date"].max(),
+            "_last_txn_date": grp["Date"].max(),
         })
     return pd.DataFrame(rows)
+
+def compute_tds_period_report(df_txn, df_tds_only, df_deductions, start_date, end_date):
+    """Per-contractor TDS totals for an arbitrary custom/monthly/quarterly date
+    range, using the same ledger so numbers always tie back to the FY summary."""
+    ledger = compute_tds_ledger(df_txn, df_tds_only)
+    if ledger.empty:
+        return pd.DataFrame()
+
+    mask = (ledger["Date"] >= start_date) & (ledger["Date"] <= end_date)
+    df_period = ledger.loc[mask]
+    if df_period.empty:
+        return pd.DataFrame()
+
+    rows = []
+    for cname, grp in df_period.groupby("Contractor"):
+        total_paid = float(grp["Amount Paid"].sum())
+        tds_amount = round(float(grp["TDS Deducted"].sum()), 2)
+
+        deposited_in_period = 0.0
+        if df_deductions is not None and not df_deductions.empty and "deposited_date" in df_deductions.columns:
+            dep = df_deductions.copy()
+            dep["deposited_date"] = pd.to_datetime(dep["deposited_date"], errors="coerce").dt.date
+            dgrp = dep[
+                (dep["contractor_name"] == cname) & (dep["deposited_date"] >= start_date) & (dep["deposited_date"] <= end_date)
+            ]
+            deposited_in_period = float(dgrp["amount"].sum())
+
+        rows.append({
+            "Contractor": cname,
+            "PAN": grp["PAN"].iloc[0],
+            "Category": grp["Category"].iloc[0],
+            "Payments Count": int(len(grp)),
+            "Total Paid": total_paid,
+            "TDS for Period": tds_amount,
+            "Deposited in Period": deposited_in_period,
+        })
+    return pd.DataFrame(rows).sort_values("Contractor")
+
+
+
+# --- PDF ENGINE FOR TDS REPORTS ---
+class TDSReportPDF(FPDF):
+    def header(self):
+        self.set_font('Arial', 'B', 16)
+        self.cell(0, 10, 'TDS Payment Report', 0, 1, 'C')
+        self.ln(2)
+    def footer(self):
+        self.set_y(-15)
+        self.set_font('Arial', 'I', 8)
+        self.cell(0, 10, f'Page {self.page_no()}', 0, 0, 'C')
+
+def generate_tds_report_pdf(period_label, df_report):
+    pdf = TDSReportPDF()
+    pdf.add_page()
+    pdf.set_font("Arial", 'B', 11)
+    pdf.cell(0, 8, _pdf_safe(f"Period: {period_label}"), 0, 1, 'L')
+    pdf.set_font("Arial", '', 9)
+    pdf.cell(0, 6, _pdf_safe(f"Generated: {date.today().strftime('%d %b %Y')}"), 0, 1, 'L')
+    pdf.ln(4)
+
+    pdf.set_font("Arial", 'B', 8)
+    pdf.set_fill_color(230, 230, 230)
+    col_widths = [38, 28, 32, 28, 30, 26]
+    headers = ["Contractor", "PAN", "Category", "Total Paid", "TDS Due", "Deposited"]
+    for w, h in zip(col_widths, headers):
+        pdf.cell(w, 8, h, 1, 0, 'C', fill=True)
+    pdf.ln()
+
+    pdf.set_font("Arial", '', 8)
+    for _, row in df_report.iterrows():
+        pdf.cell(col_widths[0], 8, _pdf_safe(str(row["Contractor"])[:24]), 1)
+        pdf.cell(col_widths[1], 8, _pdf_safe(str(row["PAN"])[:14]), 1)
+        pdf.cell(col_widths[2], 8, _pdf_safe(str(row["Category"])[:20]), 1)
+        pdf.cell(col_widths[3], 8, f"Rs. {row['Total Paid']:,.0f}", 1, 0, 'R')
+        pdf.cell(col_widths[4], 8, f"Rs. {row['TDS for Period']:,.0f}", 1, 0, 'R')
+        pdf.cell(col_widths[5], 8, f"Rs. {row['Deposited in Period']:,.0f}", 1, 0, 'R')
+        pdf.ln()
+
+    pdf.set_font("Arial", 'B', 9)
+    total_paid = df_report["Total Paid"].sum()
+    total_tds = df_report["TDS for Period"].sum()
+    total_dep = df_report["Deposited in Period"].sum()
+    pdf.cell(sum(col_widths[:3]), 8, "TOTAL", 1, 0, 'R')
+    pdf.cell(col_widths[3], 8, f"Rs. {total_paid:,.0f}", 1, 0, 'R')
+    pdf.cell(col_widths[4], 8, f"Rs. {total_tds:,.0f}", 1, 0, 'R')
+    pdf.cell(col_widths[5], 8, f"Rs. {total_dep:,.0f}", 1, 0, 'R')
+    return pdf.output(dest='S').encode('latin-1')
+
+def generate_tds_report_excel(period_label, df_report):
+    buf = io.BytesIO()
+    export_df = df_report.rename(columns={
+        "TDS for Period": "TDS Due", "Deposited in Period": "Deposited"
+    })
+    total_row = pd.DataFrame([{
+        "Contractor": "TOTAL", "PAN": "", "Category": "", "Payments Count": export_df["Payments Count"].sum(),
+        "Total Paid": export_df["Total Paid"].sum(), "TDS Due": export_df["TDS Due"].sum(),
+        "Deposited": export_df["Deposited"].sum(),
+    }])
+    export_df = pd.concat([export_df, total_row], ignore_index=True)
+
+    with pd.ExcelWriter(buf, engine="openpyxl") as writer:
+        export_df.to_excel(writer, index=False, sheet_name="TDS Report", startrow=2)
+        ws = writer.sheets["TDS Report"]
+        ws["A1"] = "TDS Payment Report"
+        ws["A2"] = f"Period: {period_label}"
+    buf.seek(0)
+    return buf.getvalue()
 
 # --- PDF ENGINE FOR LABOUR BILLS ---
 class PDFBill(FPDF):
@@ -1767,15 +1908,14 @@ elif current_tab == "🧾 Client Invoice":
 elif current_tab == "💰 TDS Calculator":
     page_header("💰 TDS Calculator", "Log contractor payments made from your bank account and see what TDS is due each month")
 
-    df_contractors_tds = fetch_data("contractors")
     df_txn = fetch_data("tds_transactions")
     df_deductions = fetch_data("tds_deductions")
     df_tds_only = fetch_data("tds_only_contractors")
 
     tds_only_names = sorted(df_tds_only["name"].unique().tolist()) if not df_tds_only.empty else []
 
-    tab_log, tab_payable, tab_only, tab_history = st.tabs(
-        ["📥 Log Bank Payment", "📊 TDS Payable", "👤 TDS-Only Contractors", "📜 Payment Log"]
+    tab_log, tab_payable, tab_only, tab_report, tab_history = st.tabs(
+        ["📥 Log Bank Payment", "📊 TDS Payable", "👤 TDS-Only Contractors", "📄 Download Report", "📜 Payment Log"]
     )
 
     # ── LOG A BANK PAYMENT ──────────────────────────────────────────────────
@@ -1811,7 +1951,7 @@ elif current_tab == "💰 TDS Calculator":
         default_fy_index = fy_options.index(current_financial_year()) if current_financial_year() in fy_options else 0
         sel_fy = st.selectbox("Financial Year", fy_options, index=default_fy_index)
 
-        summary_df = compute_tds_summary(df_txn, df_contractors_tds, df_deductions, sel_fy, df_tds_only)
+        summary_df = compute_tds_summary(df_txn, df_deductions, sel_fy, df_tds_only)
 
         if summary_df.empty:
             empty_state("💰", "No payments logged for this FY", "Log a bank payment in the previous sub-tab to see the TDS position here.")
@@ -1905,6 +2045,101 @@ elif current_tab == "💰 TDS Calculator":
                         st.rerun()
                     except Exception as e:
                         st.error(f"⚠️ Could not save this contractor: {e}")
+
+        if tds_only_names:
+            st.divider()
+            st.markdown("##### 🗑️ Delete a TDS-Only Contractor")
+            st.caption("This removes them from the dropdown when logging new payments. Any payments already logged under their name stay in the Payment Log and reports.")
+            del_contractor = st.selectbox("Select contractor to delete", tds_only_names, key="tds_only_del_select")
+            if st.button("🗑️ Delete This Contractor"):
+                try:
+                    supabase.table("tds_only_contractors").delete().eq("name", del_contractor).execute()
+                    st.success(f"✅ Deleted **{del_contractor}**.")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"⚠️ Could not delete this contractor: {e}")
+
+    # ── DOWNLOAD REPORT ──────────────────────────────────────────────────────
+    with tab_report:
+        st.caption("Generate a TDS payment report for a month, quarter, or any custom date range — with PDF and Excel downloads.")
+
+        if df_txn.empty:
+            empty_state("📄", "No payments logged yet", "Log a bank payment first to generate a report.")
+        else:
+            period_type = st.radio("Report For", ["Monthly", "Quarterly", "Custom Range"], horizontal=True, key="tds_report_period_type")
+
+            report_start, report_end, period_label = None, None, ""
+
+            if period_type == "Monthly":
+                rm1, rm2 = st.columns(2)
+                month_names = ["January", "February", "March", "April", "May", "June",
+                               "July", "August", "September", "October", "November", "December"]
+                sel_month_name = rm1.selectbox("Month", month_names, index=date.today().month - 1)
+                sel_year = rm2.number_input("Year", min_value=2020, max_value=2100, value=date.today().year, step=1)
+                sel_month_num = month_names.index(sel_month_name) + 1
+                report_start = date(sel_year, sel_month_num, 1)
+                next_month = date(sel_year + (1 if sel_month_num == 12 else 0), (sel_month_num % 12) + 1, 1)
+                report_end = next_month - timedelta(days=1)
+                period_label = f"{sel_month_name} {sel_year}"
+
+            elif period_type == "Quarterly":
+                rq1, rq2 = st.columns(2)
+                fy_options_rep = list_financial_years()
+                default_fy_idx = fy_options_rep.index(current_financial_year()) if current_financial_year() in fy_options_rep else 0
+                sel_fy_q = rq1.selectbox("Financial Year", fy_options_rep, index=default_fy_idx, key="tds_report_fy_q")
+                quarter_map = {
+                    "Q1 (Apr - Jun)": (4, 6), "Q2 (Jul - Sep)": (7, 9),
+                    "Q3 (Oct - Dec)": (10, 12), "Q4 (Jan - Mar)": (1, 3),
+                }
+                sel_q_label = rq2.selectbox("Quarter", list(quarter_map.keys()))
+                fy_start_year = int(sel_fy_q.split("-")[0])
+                start_month, end_month = quarter_map[sel_q_label]
+                q_year_start = fy_start_year if start_month >= 4 else fy_start_year + 1
+                q_year_end = fy_start_year if end_month >= 4 else fy_start_year + 1
+                report_start = date(q_year_start, start_month, 1)
+                last_day_end_month = date(q_year_end + (1 if end_month == 12 else 0), (end_month % 12) + 1, 1) - timedelta(days=1)
+                report_end = last_day_end_month
+                period_label = f"{sel_q_label} — FY {sel_fy_q}"
+
+            else:
+                rc1, rc2 = st.columns(2)
+                report_start = rc1.date_input("From", date.today().replace(day=1), format="DD-MM-YYYY", key="tds_report_from")
+                report_end = rc2.date_input("To", date.today(), format="DD-MM-YYYY", key="tds_report_to")
+                period_label = f"{report_start.strftime('%d %b %Y')} to {report_end.strftime('%d %b %Y')}"
+
+            if report_start and report_end and report_start > report_end:
+                st.error("⚠️ 'From' date must be before 'To' date.")
+            else:
+                report_df = compute_tds_period_report(df_txn, df_tds_only, df_deductions, report_start, report_end)
+
+                if report_df.empty:
+                    empty_state("📄", "No payments found for this period", "Try a different date range.")
+                else:
+                    display_report = report_df.copy()
+                    for col in ["Total Paid", "TDS for Period", "Deposited in Period"]:
+                        display_report[col] = display_report[col].apply(lambda x: f"₹{x:,.2f}")
+                    st.dataframe(display_report, width='stretch', hide_index=True)
+
+                    rk1, rk2 = st.columns(2)
+                    rk1.metric("💰 Total Paid (Period)", f"₹{report_df['Total Paid'].sum():,.2f}")
+                    rk2.metric("🧾 Total TDS (Period)", f"₹{report_df['TDS for Period'].sum():,.2f}")
+
+                    st.divider()
+                    dl1, dl2 = st.columns(2)
+                    with dl1:
+                        pdf_bytes = generate_tds_report_pdf(period_label, report_df)
+                        st.download_button(
+                            "⬇️ Download PDF", data=pdf_bytes,
+                            file_name=f"TDS_Report_{period_label.replace(' ', '_').replace('/', '-')}.pdf",
+                            mime="application/pdf", width='stretch'
+                        )
+                    with dl2:
+                        excel_bytes = generate_tds_report_excel(period_label, report_df)
+                        st.download_button(
+                            "⬇️ Download Excel", data=excel_bytes,
+                            file_name=f"TDS_Report_{period_label.replace(' ', '_').replace('/', '-')}.xlsx",
+                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", width='stretch'
+                        )
 
     # ── PAYMENT LOG ──────────────────────────────────────────────────────────
     with tab_history:
