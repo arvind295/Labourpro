@@ -8,6 +8,7 @@ from supabase import create_client
 from fpdf import FPDF
 import extra_streamlit_components as stx
 import io
+import warnings
 
 # --- 1. CONFIGURATION & SECRETS ---
 st.set_page_config(
@@ -478,6 +479,77 @@ def compute_tds_period_report(df_txn, df_tds_only, df_deductions, start_date, en
         })
     return pd.DataFrame(rows).sort_values("Contractor")
 
+
+# --- TDS BULK IMPORT (EXCEL/CSV) HELPERS ---
+# Lets the user upload a bank/expense sheet that mixes Labour payments in with
+# lots of other stuff (materials, rent, salaries...), pick out just the Labour
+# rows, and turn them into tds_transactions rows without typing each one in by hand.
+
+def _guess_column(columns, keywords):
+    """Best-effort guess of which column matches a list of keywords (case-insensitive
+    substring match). Used only to pre-select a sensible default in a selectbox —
+    the user can always override it, so a wrong guess here is harmless."""
+    cols = list(columns)
+    for kw in keywords:
+        for c in cols:
+            if kw in str(c).strip().lower():
+                return c
+    return cols[0] if cols else None
+
+def parse_amount_value(val):
+    """Turns a messy spreadsheet amount cell ('₹1,20,000', 'Rs. 45,000.50', 45000,
+    '(5000)') into a float. Returns None if it can't be read as a number."""
+    if val is None or (isinstance(val, float) and pd.isna(val)):
+        return None
+    if isinstance(val, (int, float)):
+        return float(val)
+    s = str(val).strip()
+    if not s:
+        return None
+    s = s.replace("₹", "").replace("Rs.", "").replace("Rs", "").replace(",", "").strip()
+    neg = s.startswith("(") and s.endswith(")")  # accounting-style negative, e.g. "(5000)"
+    if neg:
+        s = s[1:-1]
+    try:
+        num = float(s)
+        return -num if neg else num
+    except ValueError:
+        return None
+
+def parse_date_value(val):
+    """Turns a spreadsheet date cell — an Excel date, or a DD-MM-YYYY / DD/MM/YYYY /
+    '01-Apr-2026' style string — into a plain date object. Returns None if unreadable."""
+    if val is None or (isinstance(val, float) and pd.isna(val)):
+        return None
+    if isinstance(val, (datetime, date)):
+        return val.date() if isinstance(val, datetime) else val
+    try:
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            parsed = pd.to_datetime(val, dayfirst=True, errors="coerce")
+        if pd.isna(parsed):
+            return None
+        return parsed.date()
+    except Exception:
+        return None
+
+def find_duplicate_mask(df_new, df_existing):
+    """Flags rows in df_new (columns: Contractor, Amount, Date) that already exist
+    in the live tds_transactions table, so re-uploading the same sheet twice (or a
+    sheet that overlaps a previous one) doesn't silently double-log payments."""
+    if df_existing is None or df_existing.empty or "contractor_name" not in df_existing.columns:
+        return pd.Series([False] * len(df_new), index=df_new.index)
+    existing = df_existing.copy()
+    existing["_amt"] = pd.to_numeric(existing["amount"], errors="coerce").round(2)
+    existing["_date"] = pd.to_datetime(existing["txn_date"], errors="coerce").dt.date
+    existing["_name"] = existing["contractor_name"].astype(str).str.strip().str.lower()
+    existing_keys = set(zip(existing["_name"], existing["_date"], existing["_amt"]))
+
+    def _is_dup(row):
+        key = (str(row["Contractor"]).strip().lower(), row["Date"], round(float(row["Amount"]), 2))
+        return key in existing_keys
+
+    return df_new.apply(_is_dup, axis=1)
 
 
 # --- PDF ENGINE FOR TDS REPORTS ---
@@ -1914,8 +1986,8 @@ elif current_tab == "💰 TDS Calculator":
 
     tds_only_names = sorted(df_tds_only["name"].unique().tolist()) if not df_tds_only.empty else []
 
-    tab_log, tab_payable, tab_only, tab_report, tab_history = st.tabs(
-        ["📥 Log Bank Payment", "📊 TDS Payable", "👤 TDS-Only Contractors", "📄 Download Report", "📜 Payment Log"]
+    tab_log, tab_import, tab_payable, tab_only, tab_report, tab_history = st.tabs(
+        ["📥 Log Bank Payment", "📤 Bulk Import (Excel)", "📊 TDS Payable", "👤 TDS-Only Contractors", "📄 Download Report", "📜 Payment Log"]
     )
 
     # ── LOG A BANK PAYMENT ──────────────────────────────────────────────────
@@ -1943,6 +2015,238 @@ elif current_tab == "💰 TDS Calculator":
                             st.rerun()
                         except Exception as e:
                             st.error(f"⚠️ Could not save this payment: {e}")
+
+    # ── BULK IMPORT FROM EXCEL / CSV ─────────────────────────────────────────
+    with tab_import:
+        st.caption(
+            "Got a bank or expense sheet with lots of different payments in it — not just Labour? "
+            "Upload it here, tell us which rows are Labour, and we'll pull just those into the Payment Log."
+        )
+
+        up_file = st.file_uploader("📁 Upload Excel or CSV", type=["xlsx", "xls", "csv"], key="tds_bulk_upload")
+
+        if up_file is None:
+            st.info(
+                "ℹ️ Upload a file to get started. It's fine if it has materials, rent, salaries, etc. mixed in — "
+                "the next step lets you pick out just the Labour rows."
+            )
+        else:
+            # ── read the file (with a sheet picker for multi-sheet workbooks) ──
+            raw_df = None
+            try:
+                if up_file.name.lower().endswith(".csv"):
+                    raw_df = pd.read_csv(up_file)
+                else:
+                    xls = pd.ExcelFile(up_file)
+                    if len(xls.sheet_names) > 1:
+                        sel_sheet = st.selectbox(
+                            "This file has multiple sheets — which one has the payments?",
+                            xls.sheet_names, key="tds_bulk_sheet"
+                        )
+                    else:
+                        sel_sheet = xls.sheet_names[0]
+                    raw_df = pd.read_excel(xls, sheet_name=sel_sheet)
+                raw_df = raw_df.dropna(how="all")
+                raw_df.columns = [str(c).strip() for c in raw_df.columns]
+            except Exception as e:
+                st.error(f"⚠️ Couldn't read this file: {e}")
+
+            if raw_df is not None and raw_df.empty:
+                st.warning("⚠️ No rows found in this file.")
+            elif raw_df is not None:
+                st.markdown("#### Step 1 — Preview")
+                st.caption(f"Found **{len(raw_df)}** rows and **{len(raw_df.columns)}** columns.")
+                st.dataframe(raw_df.head(8), width='stretch', hide_index=True)
+
+                st.divider()
+                st.markdown("#### Step 2 — Which rows are Labour?")
+                cols_list = list(raw_df.columns)
+                use_category_filter = st.checkbox(
+                    "This sheet mixes Labour with other kinds of payments — filter by a column",
+                    value=True, key="tds_bulk_use_cat"
+                )
+
+                sel_labour_vals = []
+                if use_category_filter:
+                    cat_guess = _guess_column(
+                        cols_list,
+                        ["category", "type", "particular", "head", "narration", "description", "remark", "purpose"]
+                    )
+                    cat_col = st.selectbox(
+                        "Which column marks what a payment is for?",
+                        cols_list, index=cols_list.index(cat_guess) if cat_guess in cols_list else 0,
+                        key="tds_bulk_cat_col"
+                    )
+                    uniq_vals = sorted(
+                        [v for v in raw_df[cat_col].dropna().astype(str).str.strip().unique() if v],
+                        key=str.lower
+                    )
+                    default_labour_vals = [v for v in uniq_vals if "labour" in v.lower() or "labor" in v.lower()]
+                    sel_labour_vals = st.multiselect(
+                        "Select every value in that column that means 'Labour' — pick all that apply "
+                        "(e.g. if some rows say 'Labour Charges' and others say 'Labour Payment', select both)",
+                        uniq_vals, default=default_labour_vals, key="tds_bulk_labour_vals"
+                    )
+                    if not sel_labour_vals:
+                        st.warning("⚠️ Select at least one value above to continue.")
+                    filtered_df = raw_df[raw_df[cat_col].astype(str).str.strip().isin(sel_labour_vals)].copy()
+                else:
+                    filtered_df = raw_df.copy()
+
+                st.caption(f"➡️ **{len(filtered_df)}** of {len(raw_df)} rows match.")
+
+                if filtered_df.empty:
+                    st.info("ℹ️ No rows to import yet.")
+                else:
+                    st.divider()
+                    st.markdown("#### Step 3 — Match the columns")
+                    m1, m2, m3 = st.columns(3)
+                    name_guess = _guess_column(cols_list, ["contractor", "party", "paid to", "vendor", "name"])
+                    amt_guess = _guess_column(cols_list, ["amount", "debit", "paid", "amt"])
+                    date_guess = _guess_column(cols_list, ["date"])
+                    name_col = m1.selectbox("Contractor Name column", cols_list,
+                                             index=cols_list.index(name_guess) if name_guess in cols_list else 0,
+                                             key="tds_bulk_name_col")
+                    amt_col = m2.selectbox("Amount column", cols_list,
+                                            index=cols_list.index(amt_guess) if amt_guess in cols_list else 0,
+                                            key="tds_bulk_amt_col")
+                    date_col = m3.selectbox("Date column", cols_list,
+                                             index=cols_list.index(date_guess) if date_guess in cols_list else 0,
+                                             key="tds_bulk_date_col")
+
+                    st.markdown("###### Optional: only import payments within a date range")
+                    use_date_filter = st.checkbox("Limit to a date range", value=True, key="tds_bulk_use_date_filter")
+                    date_from, date_to = None, None
+                    if use_date_filter:
+                        fy_start_year = int(current_financial_year().split("-")[0])
+                        dcol1, dcol2 = st.columns(2)
+                        date_from = dcol1.date_input("From", date(fy_start_year, 4, 1), format="DD-MM-YYYY",
+                                                      key="tds_bulk_date_from")
+                        date_to = dcol2.date_input("To", date.today(), format="DD-MM-YYYY", key="tds_bulk_date_to")
+
+                    # ── build a clean working dataframe ──
+                    work_df = pd.DataFrame({
+                        "Contractor": filtered_df[name_col].astype(str).str.strip(),
+                        "Amount": filtered_df[amt_col].apply(parse_amount_value),
+                        "Date": filtered_df[date_col].apply(parse_date_value),
+                    })
+
+                    n_total = len(work_df)
+                    bad_amount = work_df["Amount"].isna() | (work_df["Amount"] <= 0)
+                    bad_date = work_df["Date"].isna()
+                    bad_name = work_df["Contractor"].isin(["", "nan", "None"])
+                    if use_date_filter:
+                        out_of_range = work_df["Date"].apply(lambda d: d is not None and not (date_from <= d <= date_to))
+                    else:
+                        out_of_range = pd.Series([False] * n_total, index=work_df.index)
+
+                    skip_mask = bad_amount | bad_date | bad_name | out_of_range
+                    n_skipped = int(skip_mask.sum())
+                    clean_df = work_df[~skip_mask].copy()
+
+                    # flag rows that look like they're already logged, so a re-upload doesn't double-count
+                    dup_mask = find_duplicate_mask(clean_df, df_txn) if not clean_df.empty else pd.Series(dtype=bool)
+                    if not clean_df.empty:
+                        clean_df["Include"] = ~dup_mask.values
+
+                    unknown_contractors = sorted(set(clean_df["Contractor"]) - set(tds_only_names)) if not clean_df.empty else []
+
+                    st.divider()
+                    st.markdown("#### Step 4 — Review & confirm")
+
+                    if n_skipped:
+                        st.warning(
+                            f"⚠️ {n_skipped} row(s) skipped — missing/zero amount, an unreadable date, a blank "
+                            "contractor name, or outside the date range above."
+                        )
+                    if not clean_df.empty and int(dup_mask.sum()) > 0:
+                        st.info(
+                            f"ℹ️ {int(dup_mask.sum())} row(s) look like duplicates of payments already in your "
+                            "Payment Log (same contractor, amount and date) — unticked by default below. "
+                            "Tick 'Include' if you really do want them added again."
+                        )
+
+                    if clean_df.empty:
+                        st.info("ℹ️ Nothing left to import after cleaning. Check the column mapping above.")
+                    else:
+                        auto_add_contractors = True
+                        if unknown_contractors:
+                            st.warning(
+                                f"⚠️ {len(unknown_contractors)} contractor name(s) aren't in your TDS-Only "
+                                f"Contractors list yet: **{', '.join(unknown_contractors)}**. They'll be added "
+                                "automatically with no PAN on file, so TDS defaults to the flat 20% rate until "
+                                "you add their PAN in the 'TDS-Only Contractors' tab."
+                            )
+                            auto_add_contractors = st.checkbox(
+                                f"Auto-add these {len(unknown_contractors)} new contractor(s) so their payments can be imported",
+                                value=True, key="tds_bulk_autoadd"
+                            )
+
+                        edited_df = st.data_editor(
+                            clean_df.sort_values("Date").reset_index(drop=True),
+                            width='stretch',
+                            hide_index=True,
+                            key="tds_bulk_editor",
+                            column_config={
+                                "Include": st.column_config.CheckboxColumn("Include?"),
+                                "Contractor": st.column_config.TextColumn("Contractor"),
+                                "Amount": st.column_config.NumberColumn("Amount (₹)", format="₹%.2f", min_value=0.0),
+                                "Date": st.column_config.DateColumn("Date", format="DD-MM-YYYY"),
+                            }
+                        )
+
+                        to_import = edited_df[edited_df["Include"]].copy()
+
+                        # guard against edits made directly in the table above (e.g. amount cleared to 0)
+                        still_invalid = (to_import["Amount"] <= 0) | (to_import["Contractor"].astype(str).str.strip() == "")
+                        if still_invalid.any():
+                            st.caption(f"↳ Skipping {int(still_invalid.sum())} row(s) edited to have no amount or contractor name.")
+                            to_import = to_import[~still_invalid]
+
+                        if not auto_add_contractors:
+                            new_names_to_import = sorted(set(to_import["Contractor"]) - set(tds_only_names))
+                            if new_names_to_import:
+                                to_import = to_import[~to_import["Contractor"].isin(new_names_to_import)]
+                                st.caption(f"↳ Skipping {len(new_names_to_import)} unregistered contractor(s) since auto-add is off.")
+
+                        n_import = len(to_import)
+                        total_amt = float(to_import["Amount"].sum()) if n_import else 0.0
+
+                        k1, k2 = st.columns(2)
+                        k1.metric("✅ Ready to import", str(n_import))
+                        k2.metric("💰 Total amount", f"₹{total_amt:,.2f}")
+
+                        if n_import == 0:
+                            st.info("ℹ️ Tick at least one row above to import.")
+                        elif st.button(f"📥 Import {n_import} Payment(s)", type="primary", key="tds_bulk_confirm"):
+                            try:
+                                with st.spinner("Importing payments..."):
+                                    if auto_add_contractors:
+                                        new_names = sorted(set(to_import["Contractor"]) - set(tds_only_names))
+                                        for nm in new_names:
+                                            supabase.table("tds_only_contractors").upsert(
+                                                {"name": nm, "pan_number": "", "entity_type": "Individual / HUF"},
+                                                on_conflict="name"
+                                            ).execute()
+
+                                    records = [
+                                        {
+                                            "contractor_name": r["Contractor"],
+                                            "amount": float(r["Amount"]),
+                                            "txn_date": pd.to_datetime(r["Date"]).strftime("%Y-%m-%d"),
+                                        }
+                                        for _, r in to_import.iterrows()
+                                    ]
+                                    for i in range(0, len(records), 50):
+                                        supabase.table("tds_transactions").insert(records[i:i + 50]).execute()
+
+                                st.success(
+                                    f"✅ Imported {n_import} payment(s) totalling ₹{total_amt:,.2f}. "
+                                    "Check the 'Payment Log' tab to review them."
+                                )
+                                st.rerun()
+                            except Exception as e:
+                                st.error(f"⚠️ Import failed partway through: {e}")
 
     # ── MONTHLY TDS PAYABLE ──────────────────────────────────────────────────
     with tab_payable:
