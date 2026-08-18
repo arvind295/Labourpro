@@ -484,6 +484,12 @@ def compute_tds_period_report(df_txn, df_tds_only, df_deductions, start_date, en
 # Lets the user upload a bank/expense sheet that mixes Labour payments in with
 # lots of other stuff (materials, rent, salaries...), pick out just the Labour
 # rows, and turn them into tds_transactions rows without typing each one in by hand.
+#
+# The whole import flow is designed to work like importing a bank statement into
+# Tally: upload the file, and everything else (header row, which column is the
+# contractor/amount/date, which rows are Labour) is auto-detected by looking at
+# the actual cell values. Advanced controls are still there for when a guess is
+# wrong, but nobody should need them for a normal file.
 
 def _guess_column(columns, keywords):
     """Best-effort guess of which column matches a list of keywords (case-insensitive
@@ -551,6 +557,197 @@ def find_duplicate_mask(df_new, df_existing):
 
     return df_new.apply(_is_dup, axis=1)
 
+def _looks_like_date_cell(v):
+    """True date cells (from Excel) or clearly date-formatted strings only — a bare
+    number is NEVER treated as a date here. Without this guard, a plain rupee
+    amount like 45000 gets misread as a valid date by pandas (it's a legal
+    nanosecond timestamp), which would wrongly flag the Amount column as the
+    Date column."""
+    if isinstance(v, (datetime, date, pd.Timestamp)):
+        return True
+    if isinstance(v, (int, float)):
+        return False
+    s = str(v).strip()
+    if not s or s.replace(".", "", 1).replace(",", "").replace("-", "").isdigit():
+        return False
+    return parse_date_value(s) is not None
+
+def _column_date_score(series):
+    """Fraction of a column's cells that look like a genuine date. Used to find the
+    date column by what's actually in it, not just by its header text."""
+    sample = series.dropna().head(50)
+    if sample.empty:
+        return 0.0
+    ok = sum(1 for v in sample if _looks_like_date_cell(v))
+    return ok / len(sample)
+
+def _column_amount_score(series):
+    """Fraction of a column's cells that parse as a rupee amount."""
+    sample = series.dropna().head(50)
+    if sample.empty:
+        return 0.0
+    ok = sum(1 for v in sample if parse_amount_value(v) is not None)
+    return ok / len(sample)
+
+def _column_text_score(series):
+    """Fraction of a column's cells that look like a name/description (not blank,
+    not a bare number) — used to find the contractor/party column."""
+    sample = series.dropna().astype(str).str.strip()
+    sample = sample[sample != ""].head(50)
+    if sample.empty:
+        return 0.0
+    def _is_texty(v):
+        bare = v.replace(".", "", 1).replace(",", "").replace("-", "").strip()
+        return len(v) > 1 and not bare.isdigit()
+    ok = sum(1 for v in sample if _is_texty(v))
+    return ok / len(sample)
+
+def auto_detect_columns(df):
+    """Looks at the ACTUAL cell values (not just header names) to guess which column
+    is the date, which is the amount, and which is the contractor/party name — so a
+    bank statement, a Tally export, or a random expense sheet all work without the
+    user having to tell us which column is which. Header text is only used as a
+    tie-breaker. Returns (name_col, amount_col, date_col); any can be None if the
+    sheet has no columns at all."""
+    cols = list(df.columns)
+    if not cols:
+        return None, None, None
+
+    date_scores = {c: _column_date_score(df[c]) for c in cols}
+    amt_scores = {c: _column_amount_score(df[c]) for c in cols}
+    text_scores = {c: _column_text_score(df[c]) for c in cols}
+
+    date_col = max(cols, key=lambda c: date_scores[c])
+    if date_scores[date_col] < 0.5:
+        kw_guess = _guess_column(cols, ["date"])
+        if kw_guess is not None:
+            date_col = kw_guess
+
+    remaining = [c for c in cols if c != date_col]
+
+    def _amt_key(c):
+        low = str(c).lower()
+        header_bonus = 0
+        for kw, bonus in [("debit", 3), ("withdrawal", 3), ("paid", 2), ("amount", 2), ("amt", 1)]:
+            if kw in low:
+                header_bonus = max(header_bonus, bonus)
+        return (round(amt_scores.get(c, 0.0), 2), header_bonus)
+
+    amt_col = max(remaining, key=_amt_key) if remaining else None
+    if amt_col is not None and amt_scores.get(amt_col, 0.0) < 0.3:
+        kw_guess = _guess_column(cols, ["amount", "debit", "withdrawal", "paid", "amt"])
+        if kw_guess in cols:
+            amt_col = kw_guess
+
+    remaining2 = [c for c in remaining if c != amt_col]
+
+    def _name_key(c):
+        low = str(c).lower()
+        header_bonus = 0
+        for kw, bonus in [("contractor", 3), ("party", 3), ("paid to", 3), ("payee", 3),
+                           ("vendor", 2), ("name", 2), ("narration", 1), ("particular", 1),
+                           ("description", 1)]:
+            if kw in low:
+                header_bonus = max(header_bonus, bonus)
+        return (round(text_scores.get(c, 0.0), 2), header_bonus)
+
+    if remaining2:
+        name_col = max(remaining2, key=_name_key)
+    elif remaining:
+        name_col = remaining[0]
+    else:
+        name_col = cols[0]
+
+    return name_col, amt_col, date_col
+
+def auto_detect_category_filter(df, exclude_cols):
+    """If the sheet has a column that looks like it separates Labour payments from
+    other expense types (materials, rent, salaries...), find it by looking for a
+    column with a manageable number of repeated values where at least one value
+    contains 'labour'/'labor'. Returns (category_col, labour_values) — or
+    (None, []) if no such column is found, in which case every row is treated as
+    a payment to import (no filtering step needed)."""
+    candidates = [c for c in df.columns if c not in exclude_cols]
+    n_rows = max(len(df), 1)
+    best_col = None
+    for c in candidates:
+        vals = df[c].dropna().astype(str).str.strip()
+        vals = vals[vals != ""]
+        if vals.empty:
+            continue
+        nunique = vals.nunique()
+        if 1 < nunique <= max(15, int(n_rows * 0.5)):
+            if any(("labour" in v.lower() or "labor" in v.lower()) for v in vals.unique()):
+                best_col = c
+                break
+    if best_col is None:
+        kw_guess = _guess_column(
+            candidates, ["category", "type", "particular", "head", "narration", "description", "remark", "purpose"]
+        ) if candidates else None
+        if kw_guess is not None:
+            vals = df[kw_guess].dropna().astype(str).str.strip()
+            if any(("labour" in v.lower() or "labor" in v.lower()) for v in vals.unique()):
+                best_col = kw_guess
+    if best_col is None:
+        return None, []
+    uniq_vals = sorted([v for v in df[best_col].dropna().astype(str).str.strip().unique() if v], key=str.lower)
+    labour_vals = [v for v in uniq_vals if "labour" in v.lower() or "labor" in v.lower()]
+    return best_col, labour_vals
+
+def _score_header_candidate(df):
+    """Scores how 'clean' a parsed table looks, so we can automatically pick how
+    many title/blank rows to skip above the real header — the way Tally exports
+    often have a company name and report title sitting above the actual table."""
+    if df is None or df.empty:
+        return -1
+    cols = list(df.columns)
+    unnamed = sum(1 for c in cols if str(c).startswith("Unnamed:") or str(c).strip() == "")
+    score = -unnamed * 2
+    _, amt_col, date_col = auto_detect_columns(df.head(30))
+    if date_col is not None:
+        score += 3
+    if amt_col is not None:
+        score += 3
+    score += min(len(df), 5)
+    return score
+
+def smart_read_table(up_file, sheet_name=None, forced_skip_rows=None):
+    """Reads an uploaded Excel/CSV file and automatically figures out how many
+    header/title rows to skip by trying a handful of options and keeping whichever
+    gives the cleanest-looking table (fewest 'Unnamed' columns, a recognisable
+    amount + date column). This is what makes 'just upload the file' work for
+    Tally exports and bank statements without asking the user anything first.
+    Returns (df, skip_rows_used, sheet_names, chosen_sheet)."""
+    is_csv = up_file.name.lower().endswith(".csv")
+    sheet_names = []
+    xls = None
+    if not is_csv:
+        up_file.seek(0)
+        xls = pd.ExcelFile(up_file)
+        sheet_names = xls.sheet_names
+        chosen_sheet = sheet_name or sheet_names[0]
+    else:
+        chosen_sheet = None
+
+    candidates = [int(forced_skip_rows)] if forced_skip_rows is not None else list(range(0, 6))
+
+    best_df, best_skip, best_score = None, candidates[0], None
+    for sr in candidates:
+        try:
+            if is_csv:
+                up_file.seek(0)
+                df = pd.read_csv(up_file, skiprows=sr)
+            else:
+                df = pd.read_excel(xls, sheet_name=chosen_sheet, skiprows=sr)
+            df = df.dropna(how="all").dropna(axis=1, how="all")
+            df.columns = [str(c).strip() for c in df.columns]
+        except Exception:
+            df = None
+        sc = _score_header_candidate(df)
+        if best_score is None or sc > best_score:
+            best_df, best_skip, best_score = df, sr, sc
+
+    return best_df, best_skip, sheet_names, chosen_sheet
 
 # --- PDF ENGINE FOR TDS REPORTS ---
 class TDSReportPDF(FPDF):
@@ -2019,125 +2216,127 @@ elif current_tab == "💰 TDS Calculator":
     # ── BULK IMPORT FROM EXCEL / CSV ─────────────────────────────────────────
     with tab_import:
         st.caption(
-            "Got a bank or expense sheet with lots of different payments in it — not just Labour? "
-            "Upload it here, tell us which rows are Labour, and we'll pull just those into the Payment Log."
+            "Upload your bank statement or expense sheet — like importing a bank statement into Tally. "
+            "We auto-detect the contractor, amount and date columns and pick out the Labour payments "
+            "for you to review before importing. It's fine if materials, rent, salaries etc. are mixed in."
         )
 
         up_file = st.file_uploader("📁 Upload Excel or CSV", type=["xlsx", "xls", "csv"], key="tds_bulk_upload")
 
         if up_file is None:
-            st.info(
-                "ℹ️ Upload a file to get started. It's fine if it has materials, rent, salaries, etc. mixed in — "
-                "the next step lets you pick out just the Labour rows. Exports from Tally (Day Book / Bank Book) work fine too."
-            )
+            st.info("ℹ️ Upload a file to get started. Bank statements and Tally exports (Day Book / Bank Book) both work.")
         else:
-            skip_rows = st.number_input(
-                "Rows to skip before the header row",
-                min_value=0, max_value=20, value=0, step=1, key="tds_bulk_skip_rows",
-                help="Only change this if the preview below looks wrong (columns named 'Unnamed: 0', a company "
-                     "name/report title sitting in row 1, etc.). Tally exports usually have a few title rows "
-                     "above the real table — try 3 or 4 here if that's what you're uploading."
-            )
+            with st.spinner("Reading file..."):
+                raw_df, auto_skip, sheet_names, chosen_sheet = smart_read_table(up_file)
+            sel_sheet = chosen_sheet
 
-            # ── read the file (with a sheet picker for multi-sheet workbooks) ──
-            raw_df = None
-            try:
-                if up_file.name.lower().endswith(".csv"):
-                    raw_df = pd.read_csv(up_file, skiprows=int(skip_rows))
-                else:
-                    xls = pd.ExcelFile(up_file)
-                    if len(xls.sheet_names) > 1:
-                        sel_sheet = st.selectbox(
-                            "This file has multiple sheets — which one has the payments?",
-                            xls.sheet_names, key="tds_bulk_sheet"
-                        )
-                    else:
-                        sel_sheet = xls.sheet_names[0]
-                    raw_df = pd.read_excel(xls, sheet_name=sel_sheet, skiprows=int(skip_rows))
-                raw_df = raw_df.dropna(how="all").dropna(axis=1, how="all")
-                raw_df.columns = [str(c).strip() for c in raw_df.columns]
-            except Exception as e:
-                st.error(f"⚠️ Couldn't read this file: {e}")
+            if len(sheet_names) > 1:
+                sel_sheet = st.selectbox(
+                    "This file has multiple sheets — which one has the payments?",
+                    sheet_names, index=sheet_names.index(chosen_sheet), key="tds_bulk_sheet"
+                )
+                if sel_sheet != chosen_sheet:
+                    with st.spinner("Reading file..."):
+                        raw_df, auto_skip, sheet_names, chosen_sheet = smart_read_table(up_file, sheet_name=sel_sheet)
 
-            if raw_df is not None and raw_df.empty:
-                st.warning("⚠️ No rows found in this file.")
-            elif raw_df is not None:
-                st.markdown("#### Step 1 — Preview")
-                st.caption(f"Found **{len(raw_df)}** rows and **{len(raw_df.columns)}** columns.")
-                if any(str(c).startswith("Unnamed:") for c in raw_df.columns):
-                    st.warning(
-                        "⚠️ Some columns came through as 'Unnamed' — that usually means the real header row "
-                        "isn't row 1. Try increasing 'Rows to skip before the header row' above until the "
-                        "preview below shows proper column names."
-                    )
-                st.dataframe(raw_df.head(8), width='stretch', hide_index=True)
+            if raw_df is None or raw_df.empty:
+                st.warning("⚠️ Couldn't find any rows in this file. Open 'Advanced options' below to set the header row manually.")
+                raw_df = pd.DataFrame() if raw_df is None else raw_df
 
-                st.divider()
-                st.markdown("#### Step 2 — Which rows are Labour?")
-                cols_list = list(raw_df.columns)
-                use_category_filter = st.checkbox(
-                    "This sheet mixes Labour with other kinds of payments — filter by a column",
-                    value=True, key="tds_bulk_use_cat"
+            cols_list = list(raw_df.columns)
+
+            if not cols_list:
+                st.info("ℹ️ No columns found in this file. Double check it's a valid Excel/CSV export.")
+            else:
+                auto_name_col, auto_amt_col, auto_date_col = auto_detect_columns(raw_df)
+                auto_cat_col, auto_labour_vals = auto_detect_category_filter(
+                    raw_df, exclude_cols={c for c in [auto_name_col, auto_amt_col, auto_date_col] if c}
                 )
 
-                sel_labour_vals = []
+                name_col, amt_col, date_col = auto_name_col, auto_amt_col, auto_date_col
+                cat_col, sel_labour_vals = None, []
+                use_category_filter = auto_cat_col is not None
                 if use_category_filter:
-                    cat_guess = _guess_column(
-                        cols_list,
-                        ["category", "type", "particular", "head", "narration", "description", "remark", "purpose"]
-                    )
-                    cat_col = st.selectbox(
-                        "Which column marks what a payment is for?",
-                        cols_list, index=cols_list.index(cat_guess) if cat_guess in cols_list else 0,
-                        key="tds_bulk_cat_col"
-                    )
-                    uniq_vals = sorted(
-                        [v for v in raw_df[cat_col].dropna().astype(str).str.strip().unique() if v],
-                        key=str.lower
-                    )
-                    default_labour_vals = [v for v in uniq_vals if "labour" in v.lower() or "labor" in v.lower()]
-                    sel_labour_vals = st.multiselect(
-                        "Select every value in that column that means 'Labour' — pick all that apply "
-                        "(e.g. if some rows say 'Labour Charges' and others say 'Labour Payment', select both)",
-                        uniq_vals, default=default_labour_vals, key="tds_bulk_labour_vals"
-                    )
-                    if not sel_labour_vals:
-                        st.warning("⚠️ Select at least one value above to continue.")
-                    filtered_df = raw_df[raw_df[cat_col].astype(str).str.strip().isin(sel_labour_vals)].copy()
-                else:
-                    filtered_df = raw_df.copy()
+                    cat_col, sel_labour_vals = auto_cat_col, auto_labour_vals
+                use_date_filter = False
+                date_from, date_to = None, None
 
-                st.caption(f"➡️ **{len(filtered_df)}** of {len(raw_df)} rows match.")
+                with st.expander("⚙️ Advanced options — fix column detection or filters", expanded=False):
+                    st.caption("Only open this if the auto-detected columns below look wrong.")
+                    manual_skip = st.number_input(
+                        "Rows to skip before the header row", min_value=0, max_value=20,
+                        value=int(auto_skip), step=1, key="tds_bulk_skip_rows",
+                        help="We auto-detected this. Change it if the preview below shows 'Unnamed' columns or a title row."
+                    )
+                    if manual_skip != auto_skip:
+                        with st.spinner("Re-reading file..."):
+                            raw_df, _, _, _ = smart_read_table(up_file, sheet_name=sel_sheet, forced_skip_rows=manual_skip)
+                        raw_df = pd.DataFrame() if raw_df is None else raw_df
+                        cols_list = list(raw_df.columns)
+                        auto_name_col, auto_amt_col, auto_date_col = auto_detect_columns(raw_df)
+                        auto_cat_col, auto_labour_vals = auto_detect_category_filter(
+                            raw_df, exclude_cols={c for c in [auto_name_col, auto_amt_col, auto_date_col] if c}
+                        )
+                        name_col, amt_col, date_col = auto_name_col, auto_amt_col, auto_date_col
 
-                if filtered_df.empty:
-                    st.info("ℹ️ No rows to import yet.")
-                else:
-                    st.divider()
-                    st.markdown("#### Step 3 — Match the columns")
-                    m1, m2, m3 = st.columns(3)
-                    name_guess = _guess_column(cols_list, ["contractor", "party", "paid to", "vendor", "name"])
-                    amt_guess = _guess_column(cols_list, ["amount", "debit", "paid", "amt"])
-                    date_guess = _guess_column(cols_list, ["date"])
-                    name_col = m1.selectbox("Contractor Name column", cols_list,
-                                             index=cols_list.index(name_guess) if name_guess in cols_list else 0,
+                    st.dataframe(raw_df.head(5), width='stretch', hide_index=True)
+
+                    c1, c2, c3 = st.columns(3)
+                    name_col = c1.selectbox("Contractor Name column", cols_list,
+                                             index=cols_list.index(auto_name_col) if auto_name_col in cols_list else 0,
                                              key="tds_bulk_name_col")
-                    amt_col = m2.selectbox("Amount column", cols_list,
-                                            index=cols_list.index(amt_guess) if amt_guess in cols_list else 0,
+                    amt_col = c2.selectbox("Amount column", cols_list,
+                                            index=cols_list.index(auto_amt_col) if auto_amt_col in cols_list else 0,
                                             key="tds_bulk_amt_col")
-                    date_col = m3.selectbox("Date column", cols_list,
-                                             index=cols_list.index(date_guess) if date_guess in cols_list else 0,
+                    date_col = c3.selectbox("Date column", cols_list,
+                                             index=cols_list.index(auto_date_col) if auto_date_col in cols_list else 0,
                                              key="tds_bulk_date_col")
 
-                    st.markdown("###### Optional: only import payments within a date range")
-                    use_date_filter = st.checkbox("Limit to a date range", value=True, key="tds_bulk_use_date_filter")
-                    date_from, date_to = None, None
+                    use_category_filter = st.checkbox(
+                        "This sheet mixes Labour with other kinds of payments — filter by a column",
+                        value=auto_cat_col is not None, key="tds_bulk_use_cat"
+                    )
+                    if use_category_filter:
+                        cat_options = [c for c in cols_list if c not in (name_col, amt_col, date_col)] or cols_list
+                        cat_col = st.selectbox(
+                            "Which column marks what a payment is for?",
+                            cat_options, index=cat_options.index(auto_cat_col) if auto_cat_col in cat_options else 0,
+                            key="tds_bulk_cat_col"
+                        )
+                        uniq_vals = sorted(
+                            [v for v in raw_df[cat_col].dropna().astype(str).str.strip().unique() if v], key=str.lower
+                        )
+                        default_labour_vals = auto_labour_vals if cat_col == auto_cat_col else [
+                            v for v in uniq_vals if "labour" in v.lower() or "labor" in v.lower()
+                        ]
+                        sel_labour_vals = st.multiselect(
+                            "Select every value in that column that means 'Labour' — pick all that apply",
+                            uniq_vals, default=default_labour_vals, key="tds_bulk_labour_vals"
+                        )
+                    else:
+                        cat_col, sel_labour_vals = None, []
+
+                    use_date_filter = st.checkbox("Limit to a date range", value=False, key="tds_bulk_use_date_filter")
                     if use_date_filter:
                         fy_start_year = int(current_financial_year().split("-")[0])
                         dcol1, dcol2 = st.columns(2)
-                        date_from = dcol1.date_input("From", date(fy_start_year, 4, 1), format="DD-MM-YYYY",
-                                                      key="tds_bulk_date_from")
+                        date_from = dcol1.date_input("From", date(fy_start_year, 4, 1), format="DD-MM-YYYY", key="tds_bulk_date_from")
                         date_to = dcol2.date_input("To", date.today(), format="DD-MM-YYYY", key="tds_bulk_date_to")
 
+                filtered_df = raw_df.copy()
+                if use_category_filter and cat_col:
+                    filtered_df = raw_df[raw_df[cat_col].astype(str).str.strip().isin(sel_labour_vals)].copy()
+
+                st.markdown("#### Review payments to import")
+                st.caption(
+                    f"Detected **{name_col}** as contractor, **{amt_col}** as amount, **{date_col}** as date"
+                    + (f", filtered to Labour rows using **{cat_col}**" if use_category_filter and cat_col else "")
+                    + f". Matched **{len(filtered_df)}** of {len(raw_df)} rows."
+                )
+
+                if filtered_df.empty:
+                    st.info("ℹ️ No rows matched. Open 'Advanced options' above to adjust the column mapping or Labour filter.")
+                else:
                     # ── build a clean working dataframe ──
                     work_df = pd.DataFrame({
                         "Contractor": filtered_df[name_col].astype(str).str.strip(),
@@ -2165,9 +2364,6 @@ elif current_tab == "💰 TDS Calculator":
 
                     unknown_contractors = sorted(set(clean_df["Contractor"]) - set(tds_only_names)) if not clean_df.empty else []
 
-                    st.divider()
-                    st.markdown("#### Step 4 — Review & confirm")
-
                     if n_skipped:
                         st.warning(
                             f"⚠️ {n_skipped} row(s) skipped — missing/zero amount, an unreadable date, a blank "
@@ -2181,7 +2377,7 @@ elif current_tab == "💰 TDS Calculator":
                         )
 
                     if clean_df.empty:
-                        st.info("ℹ️ Nothing left to import after cleaning. Check the column mapping above.")
+                        st.info("ℹ️ Nothing left to import after cleaning. Check 'Advanced options' above.")
                     else:
                         auto_add_contractors = True
                         if unknown_contractors:
