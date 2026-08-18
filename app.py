@@ -367,7 +367,16 @@ def compute_tds_ledger(df_txn, df_tds_only):
     single-payment or ₹1,00,000 aggregate threshold pulls the FULL cumulative
     amount into TDS, and every transaction after that is taxed on just its own
     amount — so summing 'TDS Deducted' across any date range gives the correct
-    TDS for that period without double-counting."""
+    TDS for that period without double-counting.
+
+    IMPORTANT — the amount logged for each payment is the NET amount actually
+    paid to the contractor (what left your bank account). TDS is NOT deducted
+    on top of it; instead the payment is grossed UP:
+        Gross = Net / (1 - rate)      TDS = Gross - Net
+    e.g. pay ₹1,00,000 net at 1% → Gross ₹1,01,010.10, TDS ₹1,010.10 —
+    the contractor still receives exactly ₹1,00,000. The ₹30,000 / ₹1,00,000
+    thresholds are tested against the GROSS value, since that is the sum
+    credited/paid for 194C purposes."""
     if df_txn is None or df_txn.empty:
         return pd.DataFrame()
 
@@ -380,14 +389,16 @@ def compute_tds_ledger(df_txn, df_tds_only):
     for (cname, fy), grp in df.groupby(["contractor_name", "fy"]):
         pan, entity = latest_contractor_profile(None, cname, df_tds_only)
         rate, rate_label = tds_rate_for(pan, entity)
-        cumulative = 0.0
+        cumulative_gross = 0.0
         liable = False
         for _, r in grp.iterrows():
-            liability_before = (cumulative * rate) if liable else 0.0
-            cumulative += float(r["amount"])
-            if r["amount"] > 30000 or cumulative > 100000:
+            net_amount = float(r["amount"])
+            gross_amount = net_amount / (1 - rate) if rate < 1 else net_amount
+            liability_before = (cumulative_gross * rate) if liable else 0.0
+            cumulative_gross += gross_amount
+            if gross_amount > 30000 or cumulative_gross > 100000:
                 liable = True
-            liability_after = (cumulative * rate) if liable else 0.0
+            liability_after = (cumulative_gross * rate) if liable else 0.0
             tds_this_txn = round(liability_after - liability_before, 2)
             ledger_rows.append({
                 "id": r.get("id"),
@@ -396,8 +407,9 @@ def compute_tds_ledger(df_txn, df_tds_only):
                 "Category": rate_label,
                 "Date": r["txn_date"],
                 "FY": fy,
-                "Amount Paid": float(r["amount"]),
-                "Cumulative FY Total": round(cumulative, 2),
+                "Amount Paid (Net)": net_amount,
+                "Gross Value": round(gross_amount, 2),
+                "Cumulative FY Total (Gross)": round(cumulative_gross, 2),
                 "TDS Deducted": tds_this_txn,
             })
     return pd.DataFrame(ledger_rows)
@@ -416,7 +428,8 @@ def compute_tds_summary(df_txn, df_deductions, fy_label, df_tds_only=None):
 
     rows = []
     for cname, grp in df_fy.groupby("Contractor"):
-        total_paid = float(grp["Amount Paid"].sum())
+        total_paid = float(grp["Amount Paid (Net)"].sum())
+        total_gross = round(float(grp["Gross Value"].sum()), 2)
         tds_liability = round(float(grp["TDS Deducted"].sum()), 2)
         threshold_crossed = tds_liability > 0
 
@@ -433,7 +446,8 @@ def compute_tds_summary(df_txn, df_deductions, fy_label, df_tds_only=None):
             "Contractor": cname,
             "PAN": grp["PAN"].iloc[0],
             "Category": grp["Category"].iloc[0],
-            "Total Paid (FY)": total_paid,
+            "Total Paid Net (FY)": total_paid,
+            "Gross Value (FY)": total_gross,
             "Threshold Crossed": "✅ Yes" if threshold_crossed else "No",
             "TDS Liability (FY)": tds_liability,
             "Already Deposited": already_deposited,
@@ -456,7 +470,8 @@ def compute_tds_period_report(df_txn, df_tds_only, df_deductions, start_date, en
 
     rows = []
     for cname, grp in df_period.groupby("Contractor"):
-        total_paid = float(grp["Amount Paid"].sum())
+        total_paid = float(grp["Amount Paid (Net)"].sum())
+        total_gross = round(float(grp["Gross Value"].sum()), 2)
         tds_amount = round(float(grp["TDS Deducted"].sum()), 2)
 
         deposited_in_period = 0.0
@@ -473,7 +488,8 @@ def compute_tds_period_report(df_txn, df_tds_only, df_deductions, start_date, en
             "PAN": grp["PAN"].iloc[0],
             "Category": grp["Category"].iloc[0],
             "Payments Count": int(len(grp)),
-            "Total Paid": total_paid,
+            "Total Paid (Net)": total_paid,
+            "Gross Value": total_gross,
             "TDS for Period": tds_amount,
             "Deposited in Period": deposited_in_period,
         })
@@ -771,8 +787,8 @@ def generate_tds_report_pdf(period_label, df_report):
 
     pdf.set_font("Arial", 'B', 8)
     pdf.set_fill_color(230, 230, 230)
-    col_widths = [38, 28, 32, 28, 30, 26]
-    headers = ["Contractor", "PAN", "Category", "Total Paid", "TDS Due", "Deposited"]
+    col_widths = [34, 26, 28, 26, 26, 26, 24]
+    headers = ["Contractor", "PAN", "Category", "Net Paid", "Gross", "TDS Due", "Deposited"]
     for w, h in zip(col_widths, headers):
         pdf.cell(w, 8, h, 1, 0, 'C', fill=True)
     pdf.ln()
@@ -782,19 +798,22 @@ def generate_tds_report_pdf(period_label, df_report):
         pdf.cell(col_widths[0], 8, _pdf_safe(str(row["Contractor"])[:24]), 1)
         pdf.cell(col_widths[1], 8, _pdf_safe(str(row["PAN"])[:14]), 1)
         pdf.cell(col_widths[2], 8, _pdf_safe(str(row["Category"])[:20]), 1)
-        pdf.cell(col_widths[3], 8, f"Rs. {row['Total Paid']:,.0f}", 1, 0, 'R')
-        pdf.cell(col_widths[4], 8, f"Rs. {row['TDS for Period']:,.0f}", 1, 0, 'R')
-        pdf.cell(col_widths[5], 8, f"Rs. {row['Deposited in Period']:,.0f}", 1, 0, 'R')
+        pdf.cell(col_widths[3], 8, f"Rs. {row['Total Paid (Net)']:,.0f}", 1, 0, 'R')
+        pdf.cell(col_widths[4], 8, f"Rs. {row['Gross Value']:,.0f}", 1, 0, 'R')
+        pdf.cell(col_widths[5], 8, f"Rs. {row['TDS for Period']:,.0f}", 1, 0, 'R')
+        pdf.cell(col_widths[6], 8, f"Rs. {row['Deposited in Period']:,.0f}", 1, 0, 'R')
         pdf.ln()
 
     pdf.set_font("Arial", 'B', 9)
-    total_paid = df_report["Total Paid"].sum()
+    total_paid = df_report["Total Paid (Net)"].sum()
+    total_gross = df_report["Gross Value"].sum()
     total_tds = df_report["TDS for Period"].sum()
     total_dep = df_report["Deposited in Period"].sum()
     pdf.cell(sum(col_widths[:3]), 8, "TOTAL", 1, 0, 'R')
     pdf.cell(col_widths[3], 8, f"Rs. {total_paid:,.0f}", 1, 0, 'R')
-    pdf.cell(col_widths[4], 8, f"Rs. {total_tds:,.0f}", 1, 0, 'R')
-    pdf.cell(col_widths[5], 8, f"Rs. {total_dep:,.0f}", 1, 0, 'R')
+    pdf.cell(col_widths[4], 8, f"Rs. {total_gross:,.0f}", 1, 0, 'R')
+    pdf.cell(col_widths[5], 8, f"Rs. {total_tds:,.0f}", 1, 0, 'R')
+    pdf.cell(col_widths[6], 8, f"Rs. {total_dep:,.0f}", 1, 0, 'R')
     return pdf.output(dest='S').encode('latin-1')
 
 def generate_tds_report_excel(period_label, df_report):
@@ -804,8 +823,8 @@ def generate_tds_report_excel(period_label, df_report):
     })
     total_row = pd.DataFrame([{
         "Contractor": "TOTAL", "PAN": "", "Category": "", "Payments Count": export_df["Payments Count"].sum(),
-        "Total Paid": export_df["Total Paid"].sum(), "TDS Due": export_df["TDS Due"].sum(),
-        "Deposited": export_df["Deposited"].sum(),
+        "Total Paid (Net)": export_df["Total Paid (Net)"].sum(), "Gross Value": export_df["Gross Value"].sum(),
+        "TDS Due": export_df["TDS Due"].sum(), "Deposited": export_df["Deposited"].sum(),
     }])
     export_df = pd.concat([export_df, total_row], ignore_index=True)
 
@@ -2196,7 +2215,8 @@ elif current_tab == "💰 TDS Calculator":
             with st.form("tds_txn_form"):
                 t1, t2 = st.columns(2)
                 txn_contractor = t1.selectbox("Contractor", tds_only_names)
-                txn_amount = t2.number_input("Amount Paid (₹)", min_value=0.0, step=1000.0, format="%.2f")
+                txn_amount = t2.number_input("Amount Paid to Contractor (₹)", min_value=0.0, step=1000.0, format="%.2f",
+                                help="The NET amount actually paid to the contractor. TDS is grossed up on top of this: Gross = Paid ÷ (1 − rate), TDS = Gross − Paid.")
                 txn_date = st.date_input("Date of Payment", date.today(), format="DD-MM-YYYY")
                 if st.form_submit_button("💾 Log Payment", type="primary"):
                     if txn_amount <= 0:
@@ -2460,7 +2480,7 @@ elif current_tab == "💰 TDS Calculator":
 
     # ── MONTHLY TDS PAYABLE ──────────────────────────────────────────────────
     with tab_payable:
-        st.caption("TDS applies to a contractor's ENTIRE financial-year total (not just the excess) once either a single payment exceeds ₹30,000 or the FY running total exceeds ₹1,00,000.")
+        st.caption("TDS applies to a contractor's ENTIRE financial-year total (not just the excess) once either a single payment's gross value exceeds ₹30,000 or the FY running gross total exceeds ₹1,00,000. Amounts you log are what you actually paid the contractor — TDS is grossed up on top (Gross = Paid ÷ (1 − rate)).")
         fy_options = list_financial_years()
         default_fy_index = fy_options.index(current_financial_year()) if current_financial_year() in fy_options else 0
         sel_fy = st.selectbox("Financial Year", fy_options, index=default_fy_index)
@@ -2471,7 +2491,7 @@ elif current_tab == "💰 TDS Calculator":
             empty_state("💰", "No payments logged for this FY", "Log a bank payment in the previous sub-tab to see the TDS position here.")
         else:
             display_df = summary_df.drop(columns=["_last_txn_date"]).copy()
-            for col in ["Total Paid (FY)", "TDS Liability (FY)", "Already Deposited", "Payable Now"]:
+            for col in ["Total Paid Net (FY)", "Gross Value (FY)", "TDS Liability (FY)", "Already Deposited", "Payable Now"]:
                 display_df[col] = display_df[col].apply(lambda x: f"₹{x:,.2f}")
             st.dataframe(display_df, width='stretch', hide_index=True)
 
@@ -2630,12 +2650,12 @@ elif current_tab == "💰 TDS Calculator":
                     empty_state("📄", "No payments found for this period", "Try a different date range.")
                 else:
                     display_report = report_df.copy()
-                    for col in ["Total Paid", "TDS for Period", "Deposited in Period"]:
+                    for col in ["Total Paid (Net)", "Gross Value", "TDS for Period", "Deposited in Period"]:
                         display_report[col] = display_report[col].apply(lambda x: f"₹{x:,.2f}")
                     st.dataframe(display_report, width='stretch', hide_index=True)
 
                     rk1, rk2 = st.columns(2)
-                    rk1.metric("💰 Total Paid (Period)", f"₹{report_df['Total Paid'].sum():,.2f}")
+                    rk1.metric("💰 Total Paid Net (Period)", f"₹{report_df['Total Paid (Net)'].sum():,.2f}")
                     rk2.metric("🧾 Total TDS (Period)", f"₹{report_df['TDS for Period'].sum():,.2f}")
 
                     st.divider()
@@ -2665,9 +2685,9 @@ elif current_tab == "💰 TDS Calculator":
             hist["txn_date"] = pd.to_datetime(hist["txn_date"]).dt.date
             hist = hist.sort_values("txn_date", ascending=False)
             hist_display = hist[["contractor_name", "amount", "txn_date"]].rename(
-                columns={"contractor_name": "Contractor", "amount": "Amount (₹)", "txn_date": "Date"}
+                columns={"contractor_name": "Contractor", "amount": "Amount Paid Net (₹)", "txn_date": "Date"}
             )
-            hist_display["Amount (₹)"] = hist_display["Amount (₹)"].apply(lambda x: f"₹{x:,.2f}")
+            hist_display["Amount Paid Net (₹)"] = hist_display["Amount Paid Net (₹)"].apply(lambda x: f"₹{x:,.2f}")
             st.dataframe(hist_display, width='stretch', hide_index=True)
 
             st.divider()
