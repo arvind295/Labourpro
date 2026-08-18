@@ -3,3 +3,4 @@ pandas
 supabase
 fpdf
 extra-streamlit-components
+openpyxl
