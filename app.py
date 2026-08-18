@@ -2028,14 +2028,22 @@ elif current_tab == "💰 TDS Calculator":
         if up_file is None:
             st.info(
                 "ℹ️ Upload a file to get started. It's fine if it has materials, rent, salaries, etc. mixed in — "
-                "the next step lets you pick out just the Labour rows."
+                "the next step lets you pick out just the Labour rows. Exports from Tally (Day Book / Bank Book) work fine too."
             )
         else:
+            skip_rows = st.number_input(
+                "Rows to skip before the header row",
+                min_value=0, max_value=20, value=0, step=1, key="tds_bulk_skip_rows",
+                help="Only change this if the preview below looks wrong (columns named 'Unnamed: 0', a company "
+                     "name/report title sitting in row 1, etc.). Tally exports usually have a few title rows "
+                     "above the real table — try 3 or 4 here if that's what you're uploading."
+            )
+
             # ── read the file (with a sheet picker for multi-sheet workbooks) ──
             raw_df = None
             try:
                 if up_file.name.lower().endswith(".csv"):
-                    raw_df = pd.read_csv(up_file)
+                    raw_df = pd.read_csv(up_file, skiprows=int(skip_rows))
                 else:
                     xls = pd.ExcelFile(up_file)
                     if len(xls.sheet_names) > 1:
@@ -2045,8 +2053,8 @@ elif current_tab == "💰 TDS Calculator":
                         )
                     else:
                         sel_sheet = xls.sheet_names[0]
-                    raw_df = pd.read_excel(xls, sheet_name=sel_sheet)
-                raw_df = raw_df.dropna(how="all")
+                    raw_df = pd.read_excel(xls, sheet_name=sel_sheet, skiprows=int(skip_rows))
+                raw_df = raw_df.dropna(how="all").dropna(axis=1, how="all")
                 raw_df.columns = [str(c).strip() for c in raw_df.columns]
             except Exception as e:
                 st.error(f"⚠️ Couldn't read this file: {e}")
@@ -2056,6 +2064,12 @@ elif current_tab == "💰 TDS Calculator":
             elif raw_df is not None:
                 st.markdown("#### Step 1 — Preview")
                 st.caption(f"Found **{len(raw_df)}** rows and **{len(raw_df.columns)}** columns.")
+                if any(str(c).startswith("Unnamed:") for c in raw_df.columns):
+                    st.warning(
+                        "⚠️ Some columns came through as 'Unnamed' — that usually means the real header row "
+                        "isn't row 1. Try increasing 'Rows to skip before the header row' above until the "
+                        "preview below shows proper column names."
+                    )
                 st.dataframe(raw_df.head(8), width='stretch', hide_index=True)
 
                 st.divider()
