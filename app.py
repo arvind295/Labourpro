@@ -374,9 +374,12 @@ def compute_tds_ledger(df_txn, df_tds_only):
     on top of it; instead the payment is grossed UP:
         Gross = Net / (1 - rate)      TDS = Gross - Net
     e.g. pay ₹1,00,000 net at 1% → Gross ₹1,01,010.10, TDS ₹1,010.10 —
-    the contractor still receives exactly ₹1,00,000. The ₹30,000 / ₹1,00,000
-    thresholds are tested against the GROSS value, since that is the sum
-    credited/paid for 194C purposes."""
+    the contractor still receives exactly ₹1,00,000. The single-payment
+    ₹30,000 threshold is tested against the NET amount you actually paid
+    (a payment of exactly ₹30,000 does NOT trigger TDS on its own; ₹30,001
+    does). The ₹1,00,000 aggregate threshold is still tested against the
+    running GROSS total for the FY, since that is the sum credited/paid
+    for 194C purposes."""
     if df_txn is None or df_txn.empty:
         return pd.DataFrame()
 
@@ -396,7 +399,7 @@ def compute_tds_ledger(df_txn, df_tds_only):
             gross_amount = net_amount / (1 - rate) if rate < 1 else net_amount
             liability_before = (cumulative_gross * rate) if liable else 0.0
             cumulative_gross += gross_amount
-            if gross_amount > 30000 or cumulative_gross > 100000:
+            if net_amount > 30000 or cumulative_gross > 100000:
                 liable = True
             liability_after = (cumulative_gross * rate) if liable else 0.0
             tds_this_txn = round(liability_after - liability_before, 2)
@@ -2480,7 +2483,7 @@ elif current_tab == "💰 TDS Calculator":
 
     # ── MONTHLY TDS PAYABLE ──────────────────────────────────────────────────
     with tab_payable:
-        st.caption("TDS applies to a contractor's ENTIRE financial-year total (not just the excess) once either a single payment's gross value exceeds ₹30,000 or the FY running gross total exceeds ₹1,00,000. Amounts you log are what you actually paid the contractor — TDS is grossed up on top (Gross = Paid ÷ (1 − rate)).")
+        st.caption("TDS applies to a contractor's ENTIRE financial-year total (not just the excess) once either a single payment (net amount you paid) exceeds ₹30,000 or the FY running gross total exceeds ₹1,00,000. Amounts you log are what you actually paid the contractor — TDS is grossed up on top (Gross = Paid ÷ (1 − rate)).")
         fy_options = list_financial_years()
         default_fy_index = fy_options.index(current_financial_year()) if current_financial_year() in fy_options else 0
         sel_fy = st.selectbox("Financial Year", fy_options, index=default_fy_index)
