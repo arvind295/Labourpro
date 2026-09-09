@@ -325,9 +325,13 @@ def list_financial_years(back=3, fwd=0):
     return [f"{y}-{str(y + 1)[-2:]}" for y in range(cy + fwd, cy - back - 1, -1)]
 
 def tds_rate_for(pan_number, entity_type):
-    """Returns (rate, human-readable reason) per Sec 194C / 393(1)."""
+    """Returns (rate, human-readable reason) per Sec 194C / 393(1).
+    NOTE: if PAN is missing, we deliberately do NOT auto-apply the flat 20%
+    no-PAN rate. Instead we return a 0% rate so no TDS is computed, and flag
+    it clearly via the label so you notice and can collect the PAN / decide
+    manually — rather than silently deducting 20% behind the scenes."""
     if not pan_number or not str(pan_number).strip():
-        return 0.20, "No PAN on file — flat 20%"
+        return 0.0, "⚠️ PAN missing — TDS not calculated"
     if entity_type == "Individual / HUF":
         return 0.01, "Individual/HUF — 1%"
     return 0.02, "Company/Firm/Other — 2%"
@@ -2407,7 +2411,7 @@ elif current_tab == "💰 TDS Calculator":
                             st.warning(
                                 f"⚠️ {len(unknown_contractors)} contractor name(s) aren't in your TDS-Only "
                                 f"Contractors list yet: **{', '.join(unknown_contractors)}**. They'll be added "
-                                "automatically with no PAN on file, so TDS defaults to the flat 20% rate until "
+                                "automatically with no PAN on file, so TDS won't be calculated until "
                                 "you add their PAN in the 'TDS-Only Contractors' tab."
                             )
                             auto_add_contractors = st.checkbox(
@@ -2493,10 +2497,25 @@ elif current_tab == "💰 TDS Calculator":
         if summary_df.empty:
             empty_state("💰", "No payments logged for this FY", "Log a bank payment in the previous sub-tab to see the TDS position here.")
         else:
+            missing_pan_count = int((summary_df["PAN"] == "— missing —").sum())
+            if missing_pan_count > 0:
+                missing_pan_names = summary_df.loc[summary_df["PAN"] == "— missing —", "Contractor"].tolist()
+                st.warning(
+                    f"⚠️ {missing_pan_count} contractor(s) have **no PAN on file**, so TDS is **not being "
+                    f"calculated** for them (rows highlighted below): **{', '.join(missing_pan_names)}**. "
+                    "Add their PAN in the 'TDS-Only Contractors' tab (or the contractor's profile) once you have it."
+                )
+
             display_df = summary_df.drop(columns=["_last_txn_date"]).copy()
             for col in ["Total Paid Net (FY)", "Gross Value (FY)", "TDS Liability (FY)", "Already Deposited", "Payable Now"]:
                 display_df[col] = display_df[col].apply(lambda x: f"₹{x:,.2f}")
-            st.dataframe(display_df, width='stretch', hide_index=True)
+
+            def _highlight_missing_pan(row):
+                if row["PAN"] == "— missing —":
+                    return ["background-color: #FFF3CD; color: #664D03;"] * len(row)
+                return [""] * len(row)
+
+            st.dataframe(display_df.style.apply(_highlight_missing_pan, axis=1), width='stretch', hide_index=True)
 
             total_payable = summary_df["Payable Now"].sum()
             k1, k2 = st.columns(2)
@@ -2563,7 +2582,7 @@ elif current_tab == "💰 TDS Calculator":
                     default_pan_o, default_entity_o = "", "Individual / HUF"
 
             oc_pan = st.text_input("PAN Number", value=default_pan_o, placeholder="e.g. ABCDE1234F",
-                                   help="Leave blank if not available — TDS will default to the flat 20% no-PAN rate.")
+                                   help="Leave blank if not available — TDS won't be calculated for this contractor until a PAN is added (flagged in the TDS reports).")
             oc_entity = st.selectbox("Entity Type", TDS_ENTITY_OPTIONS,
                                      index=TDS_ENTITY_OPTIONS.index(default_entity_o) if default_entity_o in TDS_ENTITY_OPTIONS else 0)
 
@@ -2652,10 +2671,23 @@ elif current_tab == "💰 TDS Calculator":
                 if report_df.empty:
                     empty_state("📄", "No payments found for this period", "Try a different date range.")
                 else:
+                    missing_pan_count_p = int((report_df["PAN"] == "— missing —").sum())
+                    if missing_pan_count_p > 0:
+                        st.warning(
+                            f"⚠️ {missing_pan_count_p} contractor(s) in this period have no PAN on file, "
+                            "so no TDS is being calculated for them (rows highlighted below)."
+                        )
+
                     display_report = report_df.copy()
                     for col in ["Total Paid (Net)", "Gross Value", "TDS for Period", "Deposited in Period"]:
                         display_report[col] = display_report[col].apply(lambda x: f"₹{x:,.2f}")
-                    st.dataframe(display_report, width='stretch', hide_index=True)
+
+                    def _highlight_missing_pan_report(row):
+                        if row["PAN"] == "— missing —":
+                            return ["background-color: #FFF3CD; color: #664D03;"] * len(row)
+                        return [""] * len(row)
+
+                    st.dataframe(display_report.style.apply(_highlight_missing_pan_report, axis=1), width='stretch', hide_index=True)
 
                     rk1, rk2 = st.columns(2)
                     rk1.metric("💰 Total Paid Net (Period)", f"₹{report_df['Total Paid (Net)'].sum():,.2f}")
@@ -2995,7 +3027,7 @@ elif current_tab == "👷 Contractors":
             st.caption("Used by the TDS Calculator to work out the deduction rate for this contractor.")
             c4, c5 = st.columns(2)
             pan_in = c4.text_input("PAN Number", value=default_pan, placeholder="e.g. ABCDE1234F",
-                                   help="Leave blank if not available — TDS will default to the flat 20% no-PAN rate.")
+                                   help="Leave blank if not available — TDS won't be calculated for this contractor until a PAN is added (flagged in the TDS reports).")
             entity_in = c5.selectbox("Entity Type", TDS_ENTITY_OPTIONS,
                                      index=TDS_ENTITY_OPTIONS.index(default_entity) if default_entity in TDS_ENTITY_OPTIONS else 0,
                                      help="Individual/HUF is taxed at 1%, everything else (company, firm, partnership) at 2%.")
