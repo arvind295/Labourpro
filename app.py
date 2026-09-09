@@ -418,6 +418,12 @@ def compute_tds_ledger(df_txn, df_tds_only):
                 "Gross Value": round(gross_amount, 2),
                 "Cumulative FY Total (Gross)": round(cumulative_gross, 2),
                 "TDS Deducted": tds_this_txn,
+                # Whether the ₹30,000 / ₹1,00,000 threshold has actually been
+                # crossed as of this transaction — tracked independently of
+                # the rate, so it stays correct even when rate is 0% because
+                # PAN is missing (otherwise TDS Deducted would always look
+                # like "0 = below threshold" even when it's actually crossed).
+                "Threshold Crossed": liable,
             })
     return pd.DataFrame(ledger_rows)
 
@@ -438,7 +444,22 @@ def compute_tds_summary(df_txn, df_deductions, fy_label, df_tds_only=None):
         total_paid = float(grp["Amount Paid (Net)"].sum())
         total_gross = round(float(grp["Gross Value"].sum()), 2)
         tds_liability = round(float(grp["TDS Deducted"].sum()), 2)
-        threshold_crossed = tds_liability > 0
+        # Use the actual threshold flag, not "TDS Deducted > 0" — the latter
+        # is always 0 for PAN-missing contractors regardless of whether the
+        # threshold was really crossed, which used to mislabel them.
+        threshold_crossed = bool(grp["Threshold Crossed"].any())
+        pan_missing = grp["PAN"].iloc[0] == "— missing —"
+
+        if pan_missing and threshold_crossed:
+            # This is the only case that actually needs attention: TDS is
+            # due (threshold crossed) but can't be calculated without a PAN.
+            remarks = "⚠️ PAN missing — TDS due but not calculated"
+        elif pan_missing and not threshold_crossed:
+            # No PAN yet, but it doesn't matter right now — nothing has
+            # crossed the threshold, so no TDS would be due either way.
+            remarks = "PAN missing — not yet applicable (below threshold)"
+        else:
+            remarks = grp["Category"].iloc[0]
 
         already_deposited = 0.0
         if df_deductions is not None and not df_deductions.empty:
@@ -452,13 +473,14 @@ def compute_tds_summary(df_txn, df_deductions, fy_label, df_tds_only=None):
         rows.append({
             "Contractor": cname,
             "PAN": grp["PAN"].iloc[0],
-            "Category": grp["Category"].iloc[0],
+            "Category": remarks,
             "Total Paid Net (FY)": total_paid,
             "Gross Value (FY)": total_gross,
             "Threshold Crossed": "✅ Yes" if threshold_crossed else "No",
             "TDS Liability (FY)": tds_liability,
             "Already Deposited": already_deposited,
             "Payable Now": payable_now,
+            "_needs_pan_attention": pan_missing and threshold_crossed,
             "_last_txn_date": grp["Date"].max(),
         })
     return pd.DataFrame(rows)
@@ -480,6 +502,15 @@ def compute_tds_period_report(df_txn, df_tds_only, df_deductions, start_date, en
         total_paid = float(grp["Amount Paid (Net)"].sum())
         total_gross = round(float(grp["Gross Value"].sum()), 2)
         tds_amount = round(float(grp["TDS Deducted"].sum()), 2)
+        threshold_crossed = bool(grp["Threshold Crossed"].any())
+        pan_missing = grp["PAN"].iloc[0] == "— missing —"
+
+        if pan_missing and threshold_crossed:
+            remarks = "⚠️ PAN missing — TDS due but not calculated"
+        elif pan_missing and not threshold_crossed:
+            remarks = "PAN missing — not yet applicable (below threshold)"
+        else:
+            remarks = grp["Category"].iloc[0]
 
         deposited_in_period = 0.0
         if df_deductions is not None and not df_deductions.empty and "deposited_date" in df_deductions.columns:
@@ -493,7 +524,8 @@ def compute_tds_period_report(df_txn, df_tds_only, df_deductions, start_date, en
         rows.append({
             "Contractor": cname,
             "PAN": grp["PAN"].iloc[0],
-            "Category": grp["Category"].iloc[0],
+            "Category": remarks,
+            "_needs_pan_attention": pan_missing and threshold_crossed,
             "Payments Count": int(len(grp)),
             "Total Paid (Net)": total_paid,
             "Gross Value": total_gross,
@@ -2497,25 +2529,27 @@ elif current_tab == "💰 TDS Calculator":
         if summary_df.empty:
             empty_state("💰", "No payments logged for this FY", "Log a bank payment in the previous sub-tab to see the TDS position here.")
         else:
-            missing_pan_count = int((summary_df["PAN"] == "— missing —").sum())
-            if missing_pan_count > 0:
-                missing_pan_names = summary_df.loc[summary_df["PAN"] == "— missing —", "Contractor"].tolist()
+            needs_attention = summary_df[summary_df["_needs_pan_attention"]]
+            if not needs_attention.empty:
                 st.warning(
-                    f"⚠️ {missing_pan_count} contractor(s) have **no PAN on file**, so TDS is **not being "
-                    f"calculated** for them (rows highlighted below): **{', '.join(missing_pan_names)}**. "
-                    "Add their PAN in the 'TDS-Only Contractors' tab (or the contractor's profile) once you have it."
+                    f"⚠️ {len(needs_attention)} contractor(s) have **crossed the TDS threshold** but have "
+                    f"**no PAN on file**, so TDS is due but not being calculated (rows highlighted below): "
+                    f"**{', '.join(needs_attention['Contractor'].tolist())}**. "
+                    "Add their PAN in the 'TDS-Only Contractors' tab (or the contractor's profile) so TDS can be worked out."
                 )
 
-            display_df = summary_df.drop(columns=["_last_txn_date"]).copy()
+            display_df = summary_df.drop(columns=["_last_txn_date", "_needs_pan_attention"]).reset_index(drop=True)
             for col in ["Total Paid Net (FY)", "Gross Value (FY)", "TDS Liability (FY)", "Already Deposited", "Payable Now"]:
                 display_df[col] = display_df[col].apply(lambda x: f"₹{x:,.2f}")
 
-            def _highlight_missing_pan(row):
-                if row["PAN"] == "— missing —":
+            needs_attention_flags = summary_df["_needs_pan_attention"].reset_index(drop=True).tolist()
+
+            def _highlight_needs_attention(row):
+                if needs_attention_flags[row.name]:
                     return ["background-color: #FFF3CD; color: #664D03;"] * len(row)
                 return [""] * len(row)
 
-            st.dataframe(display_df.style.apply(_highlight_missing_pan, axis=1), width='stretch', hide_index=True)
+            st.dataframe(display_df.style.apply(_highlight_needs_attention, axis=1), width='stretch', hide_index=True)
 
             total_payable = summary_df["Payable Now"].sum()
             k1, k2 = st.columns(2)
@@ -2671,23 +2705,26 @@ elif current_tab == "💰 TDS Calculator":
                 if report_df.empty:
                     empty_state("📄", "No payments found for this period", "Try a different date range.")
                 else:
-                    missing_pan_count_p = int((report_df["PAN"] == "— missing —").sum())
-                    if missing_pan_count_p > 0:
+                    needs_attention_p = report_df[report_df["_needs_pan_attention"]]
+                    if not needs_attention_p.empty:
                         st.warning(
-                            f"⚠️ {missing_pan_count_p} contractor(s) in this period have no PAN on file, "
-                            "so no TDS is being calculated for them (rows highlighted below)."
+                            f"⚠️ {len(needs_attention_p)} contractor(s) in this period have crossed the TDS "
+                            "threshold but have no PAN on file, so TDS is due but not being calculated "
+                            "(rows highlighted below)."
                         )
 
-                    display_report = report_df.copy()
+                    display_report = report_df.drop(columns=["_needs_pan_attention"]).reset_index(drop=True)
                     for col in ["Total Paid (Net)", "Gross Value", "TDS for Period", "Deposited in Period"]:
                         display_report[col] = display_report[col].apply(lambda x: f"₹{x:,.2f}")
 
-                    def _highlight_missing_pan_report(row):
-                        if row["PAN"] == "— missing —":
+                    needs_attention_flags_p = report_df["_needs_pan_attention"].reset_index(drop=True).tolist()
+
+                    def _highlight_needs_attention_report(row):
+                        if needs_attention_flags_p[row.name]:
                             return ["background-color: #FFF3CD; color: #664D03;"] * len(row)
                         return [""] * len(row)
 
-                    st.dataframe(display_report.style.apply(_highlight_missing_pan_report, axis=1), width='stretch', hide_index=True)
+                    st.dataframe(display_report.style.apply(_highlight_needs_attention_report, axis=1), width='stretch', hide_index=True)
 
                     rk1, rk2 = st.columns(2)
                     rk1.metric("💰 Total Paid Net (Period)", f"₹{report_df['Total Paid (Net)'].sum():,.2f}")
